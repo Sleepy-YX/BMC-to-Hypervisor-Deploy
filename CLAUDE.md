@@ -41,6 +41,12 @@ Driven by `Invoke-Deployment.ps1`. Read-only audit is `stages\Test-DeployReadine
 CSV load/validate, read-only readiness (ping/port/auth), logging, confirm gate,
 Dell virtual-media boot control.
 
+**Dell BMC baseline: production-tested.** The confirmed iDRAC logic (DNS, master
+alert, NTP, timezone, Secure Syslog with CA cert upload, eventfilters) is ported
+into `lib/Providers/Dell.iDRAC.psm1` (`Invoke-DellBmcBaseline`) from the proven
+standalone scripts in `platforms/dell/`. Confirmed attributes/gotchas are in
+`docs/README-iDRAC-Automation.md` — treat as load-bearing.
+
 **Needs live-hardware verification before fleet use** (search `TODO(live-hardware)`
 and `stub`): firmware update, BIOS/RAID profile apply, XCC3 virtual-media +
 boot-order syntax, Nutanix Foundation API payload, Proxmox/Azure Stack HCI

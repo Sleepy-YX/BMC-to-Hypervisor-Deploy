@@ -29,8 +29,11 @@ readiness  ->  firmware  ->  bios  ->  bmc-baseline  ->  install  ->  clusterjoi
   first and is also standalone (`stages\Test-DeployReadiness.ps1`). Touches nothing.
 - **firmware** -- vendor firmware update (Dell catalog / Lenovo UXSP). *Stub -- wire to your repo.*
 - **bios** -- apply BIOS/RAID profile (boot mode, power, virtual disk). *Stub.*
-- **bmc-baseline** -- DNS/NTP/Timezone/Syslog/Alerts. Reuse the production-ready
-  iDRAC baseline script; XCC3 baseline is still IN DESIGN (see CLAUDE.md).
+- **bmc-baseline** -- DNS/NTP/Timezone/Secure Syslog/Alerts. **Dell is
+  production-tested** — the confirmed iDRAC logic is ported into the provider
+  (`Invoke-DellBmcBaseline`) from `platforms/dell/Set-iDRAC-NTP-Syslog-Alerts.ps1`;
+  see [`docs/README-iDRAC-Automation.md`](docs/README-iDRAC-Automation.md). XCC3
+  baseline is still IN DESIGN (syslog attr mapping BLOCKING — see CLAUDE.md).
 - **install** -- mount install ISO via BMC virtual media, set one-time boot,
   power-cycle. AHV instead triggers **Nutanix Foundation** imaging over IPMI.
 - **clusterjoin** -- poll until the hypervisor is up, then join vCenter / Prism /
@@ -84,6 +87,9 @@ logs/                          Timestamped per-run CSV logs (git-ignored)
 
 - Platform-independent plumbing (orchestrator, logging, readiness, CSV, confirm,
   virtual-media boot control) is **working**.
+- **Dell iDRAC BMC baseline is production-tested** (DNS/NTP/Timezone/Secure
+  Syslog + CA cert upload/Alerts), ported from the proven standalone scripts in
+  `platforms/dell/`.
 - Hardware-specific verbs marked `TODO(live-hardware)` or `stub` must be
   **verified against a single live host before fleet rollout** -- same discipline
   as the BMC Fleet Automation repo. Never trust an attribute path or vendor

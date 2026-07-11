@@ -11,6 +11,11 @@ logs/*.log
 templates/*.local.*
 *.rendered
 
+# Site-specific syslog CA certs (env-specific; provide your own)
+config/*.pem
+config/*.crt
+platforms/dell/idrac_list.csv
+
 # Editor / OS cruft
 .vscode/
 .idea/

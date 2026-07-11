@@ -124,13 +124,32 @@ foreach ($s in $servers) {
                 }
 
                 'bmc-baseline' {
-                    $msg = "Apply BMC baseline: DNS/NTP/Timezone/Syslog/Alerts (from config)."
+                    $bl = if ($cfg.ContainsKey('Baseline')) { $cfg.Baseline } else { $null }
+                    if (-not $bl) {
+                        Write-Stage $ip 'bmc-baseline' 'FAIL' 'config Baseline section missing'
+                        Add-LogRow  $ip 'bmc-baseline' 'FAIL' 'config Baseline section missing'
+                        break
+                    }
+                    $msg = "Apply BMC baseline (Dell): DNS $($bl.Dns1)/$($bl.Dns2), NTP $($bl.Ntp1)/$($bl.Ntp2), " +
+                           "TZ $($bl.Timezone), Secure Syslog $($bl.SyslogServer) (CA $($bl.SyslogCaCertPath)), " +
+                           "master alert + eventfilters (snmp,remotesyslog; critical+warning; all categories)."
                     if (Confirm-Change -Summary "[$ip] $msg" -Force:$Force -WhatIf:$WhatIf) {
-                        # Dell path is production-ready in the BMC Fleet Automation repo:
-                        #   Set-iDRAC-NTP-Syslog-Alerts.ps1 -- call it here or port it in.
-                        # Lenovo XCC3 baseline is IN DESIGN (syslog attr mapping BLOCKING).
-                        Write-Stage $ip 'bmc-baseline' 'WARN' 'wire in existing iDRAC baseline / XCC3 pending'
-                        Add-LogRow  $ip 'bmc-baseline' 'WARN' 'reuse existing baseline script'
+                        if ($platform -eq 'dell') {
+                            # Runs the ported, production-tested iDRAC baseline (see
+                            # platforms\dell\Set-iDRAC-NTP-Syslog-Alerts.ps1). One row per step.
+                            foreach ($st in (Invoke-DellBmcBaseline -IP $ip -Credential $cred -Baseline $bl)) {
+                                $sym = switch ($st.Status) {
+                                    'Success' { 'OK' } 'Partial' { 'WARN' } 'Skipped' { 'SKIP' } default { 'FAIL' }
+                                }
+                                $extra = if ($st.PSObject.Properties.Name -contains 'Verify') { " (verify=$($st.Verify))" } else { '' }
+                                Write-Stage $ip "baseline:$($st.Step)" $sym "$($st.Detail)$extra"
+                                Add-LogRow  $ip "baseline:$($st.Step)" $st.Status "$($st.Detail)$extra"
+                            }
+                        } else {
+                            # Lenovo XCC3 baseline is IN DESIGN -- syslog attr mapping BLOCKING.
+                            Write-Stage $ip 'bmc-baseline' 'WARN' 'XCC3 baseline pending (syslog attr mapping unconfirmed)'
+                            Add-LogRow  $ip 'bmc-baseline' 'WARN' 'XCC3 baseline pending'
+                        }
                     } else {
                         Write-Stage $ip 'bmc-baseline' 'SKIP' 'declined/whatif'
                         Add-LogRow  $ip 'bmc-baseline' 'SKIP' 'declined/whatif'

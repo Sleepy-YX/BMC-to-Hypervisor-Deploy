@@ -2,12 +2,17 @@
     # Global deployment settings. No secrets here -- the BMC password is prompted
     # once per run and never stored. Edit paths/values for your environment.
 
-    # BMC baseline (consumed by the bmc-baseline stage / existing iDRAC scripts)
+    # BMC baseline -- consumed by Invoke-DellBmcBaseline (bmc-baseline stage).
+    # Keys map 1:1 to the confirmed iDRAC operations ported from
+    # platforms\dell\Set-iDRAC-NTP-Syslog-Alerts.ps1.
     Baseline = @{
-        Dns      = @('10.0.0.1', '10.0.0.2')
-        Ntp      = @('10.0.0.1', 'pool.ntp.org')
-        Timezone = 'Asia/Singapore'         # IANA format (iDRAC.Time.Timezone)
-        Syslog   = @('10.0.0.50')           # remote syslog target(s)
+        Dns1             = '10.0.0.1'
+        Dns2             = '10.0.0.2'                 # optional; iDRAC IPv4 has DNS1/DNS2 only
+        Ntp1             = '10.0.0.1'
+        Ntp2             = 'pool.ntp.org'             # NTP2 may be an FQDN
+        Timezone         = 'Asia/Singapore'          # IANA format (idrac.Time.Timezone)
+        SyslogServer     = '10.0.0.50'               # SECURE syslog, single target (platform limit)
+        SyslogCaCertPath = '.\config\syslog-ca.pem'  # REQUIRED for Dell Secure Syslog (sslcertupload -t 12)
     }
 
     # Install ISOs per hypervisor. Must be reachable by the BMC as virtual media
