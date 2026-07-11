@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InfraServerSetup</title>
+<style>
+  :root {
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #222220;
+    --surface-3:   #2a2a28;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --ink-muted:   #898781;
+    --border:      rgba(255,255,255,0.10);
+    --grid:        #2c2c2a;
+    --accent:      #3987e5;
+    --st-ok:       #0ca30c;
+    --st-warn:     #fab219;
+    --st-fail:     #d03b3b;
+    --st-skip:     #898781;
+    --st-info:     #52514e;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink-2);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding-bottom: 40px;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 22px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { font-size: 19px; font-weight: 700; color: var(--ink); letter-spacing: .3px; }
+  .brand span { color: var(--accent); }
+  .repo { color: var(--ink-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .live-badge {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(208,59,59,.15); border: 1px solid var(--st-fail);
+    color: #ff8f8f; font-weight: 700; font-size: 12px; letter-spacing: 1px;
+    padding: 5px 12px; border-radius: 999px;
+  }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--st-fail); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  .hidden { display: none !important; }
+
+  .tiles { display: flex; gap: 12px; padding: 18px 22px 6px; flex-wrap: wrap; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 18px; min-width: 132px;
+  }
+  .tile .v { font-size: 26px; font-weight: 700; color: var(--ink); }
+  .tile .l { font-size: 12px; color: var(--ink-muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+  .tabs { display: flex; gap: 4px; padding: 12px 22px 0; border-bottom: 1px solid var(--border); }
+  .tabs button {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--ink-muted); font: inherit; font-weight: 600;
+    padding: 8px 14px; cursor: pointer;
+  }
+  .tabs button:hover { color: var(--ink-2); }
+  .tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+  main { padding: 18px 22px; }
+  .filters { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .filters select {
+    background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 10px; font: inherit;
+  }
+  .filters .flabel { font-size: 12px; color: var(--ink-muted); }
+
+  table { border-collapse: collapse; width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--grid); }
+  th { color: var(--ink-muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  td.center, th.center { text-align: center; }
+  .hostname { color: var(--ink); font-weight: 600; cursor: pointer; }
+  .hostname:hover { color: var(--accent); text-decoration: underline; }
+  .meta { font-size: 11.5px; color: var(--ink-muted); }
+
+  .cell {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 26px; border-radius: 6px; border: 1px solid transparent;
+    font-weight: 700; font-size: 13px; cursor: pointer; background: var(--surface-3); color: var(--ink-muted);
+  }
+  .cell:hover { border-color: var(--ink-muted); }
+  .cell.st-OK   { background: rgba(12,163,12,.16);  color: var(--st-ok);   }
+  .cell.st-WARN { background: rgba(250,178,25,.14); color: var(--st-warn); }
+  .cell.st-FAIL { background: rgba(208,59,59,.16);  color: var(--st-fail); }
+  .cell.st-SKIP { background: var(--surface-3);     color: var(--st-skip); }
+  .cell.st-none { background: transparent; border: 1px dashed var(--grid); color: var(--grid); cursor: default; }
+
+  .bar { display: flex; gap: 2px; width: 150px; height: 10px; }
+  .bar i { flex: 1; border-radius: 3px; background: var(--surface-3); }
+  .bar i.st-OK { background: var(--st-ok); } .bar i.st-WARN { background: var(--st-warn); }
+  .bar i.st-FAIL { background: var(--st-fail); } .bar i.st-SKIP { background: var(--st-skip); }
+
+  .detail {
+    position: sticky; bottom: 0; margin: 14px 0 0;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; font-size: 13px;
+  }
+  .detail b { color: var(--ink); }
+  .detail .x { float: right; cursor: pointer; color: var(--ink-muted); }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; margin-right: 10px; }
+  .chip .dot { width: 8px; height: 8px; }
+
+  .runcard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .runhead { display: flex; align-items: center; gap: 18px; padding: 12px 16px; cursor: pointer; flex-wrap: wrap; }
+  .runhead:hover { background: var(--surface-2); }
+  .runhead .rid { color: var(--ink); font-weight: 700; }
+  .runhead .rmeta { color: var(--ink-muted); font-size: 12px; }
+  .runbody { border-top: 1px solid var(--grid); padding: 4px 0; }
+  .runbody table { border: none; border-radius: 0; }
+
+  .panelrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-muted); margin-bottom: 10px; }
+  .statline { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 13px; }
+  .statline .n { color: var(--ink); font-weight: 700; min-width: 20px; text-align: right; }
+  .statline .track { flex: 1; height: 8px; background: var(--surface-3); border-radius: 4px; overflow: hidden; }
+  .statline .fill { height: 100%; border-radius: 4px; background: var(--st-fail); }
+
+  .stagegroup { margin-bottom: 18px; }
+  .stagegroup h3 { color: var(--ink); font-size: 14px; margin-bottom: 8px; }
+  .tri { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--st-fail); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+  .tri.warn { border-left-color: var(--st-warn); }
+  .tri .who { color: var(--ink); font-weight: 600; }
+  .tri .when { color: var(--ink-muted); font-size: 11.5px; }
+
+  .tail {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+    background: var(--surface); border-top: 2px solid var(--st-fail);
+    max-height: 200px; display: flex; flex-direction: column;
+  }
+  .tail-head { padding: 6px 22px; font-size: 12px; font-weight: 700; color: #ff8f8f; letter-spacing: 1px; }
+  #tailBody { overflow-y: auto; padding: 0 22px 10px; font: 12px/1.7 Consolas, monospace; }
+  #tailBody .st { font-weight: 700; }
+
+  .legend { padding: 10px 22px; color: var(--ink-muted); font-size: 12px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .legend .cell { width: 22px; height: 20px; font-size: 11px; cursor: default; }
+  .empty { color: var(--ink-muted); padding: 30px; text-align: center; }
+
+  /* Fleet Setup */
+  .setup-table input, .setup-table select {
+    background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; width: 100%;
+  }
+  .setup-table td { padding: 5px 6px; }
+  .setup-table .rownum { color: var(--ink-muted); font-size: 11px; text-align: right; }
+  textarea.paste {
+    width: 100%; min-height: 110px; resize: vertical;
+    background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; font: 13px/1.5 Consolas, monospace;
+  }
+  .btn {
+    background: var(--surface-3); color: var(--ink); border: 1px solid var(--border);
+    border-radius: 7px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--ink-muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.danger-ghost { color: var(--st-fail); background: none; border: none; font-size: 15px; padding: 4px 8px; }
+  .btnrow { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .verr { color: var(--st-fail); font-size: 13px; margin: 4px 0; }
+  .chk { display: block; margin: 5px 0; cursor: pointer; }
+  .chk input[type="checkbox"] { accent-color: var(--accent); margin-right: 6px; }
+  .cred input {
+    background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 9px; font: inherit; width: 200px; margin-left: 8px;
+  }
+  .cred { display: flex; align-items: center; margin: 7px 0; }
+  .cred span { min-width: 80px; color: var(--ink-muted); font-size: 13px; }
+  .vok { color: var(--st-ok); font-size: 13px; margin: 4px 0; font-weight: 600; }
+  .vnote { color: var(--ink-muted); font-size: 12px; margin-top: 6px; }
+  .error-banner { background: rgba(208,59,59,.15); border: 1px solid var(--st-fail); color: #ff8f8f; padding: 10px 22px; margin: 12px 22px; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Infra<span>ServerSetup</span></div>
+  <div class="repo" id="repoPath"></div>
+  <div class="live-badge hidden" id="liveBadge"><span class="pulse"></span> LIVE RUN IN PROGRESS</div>
+</header>
+
+<div id="errorBanner" class="error-banner hidden"></div>
+<section class="tiles" id="tiles"></section>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="grid" class="active">Fleet Grid</button>
+  <button data-tab="runs">Run History</button>
+  <button data-tab="host">Host Timeline</button>
+  <button data-tab="triage">Triage</button>
+  <button data-tab="deploy">Deploy</button>
+  <button data-tab="setup">Fleet Setup</button>
+</nav>
+
+<main id="view"></main>
+
+<section class="tail hidden" id="tail">
+  <div class="tail-head">LIVE LOG</div>
+  <div id="tailBody"></div>
+</section>
+
+<footer class="legend">
+  <span><span class="cell st-OK">&#10003;</span> OK</span>
+  <span><span class="cell st-WARN">!</span> WARN</span>
+  <span><span class="cell st-FAIL">&#10005;</span> FAIL</span>
+  <span><span class="cell st-SKIP">&#187;</span> SKIP</span>
+  <span><span class="cell st-none"></span> no data</span>
+</footer>
+
+<script>
+'use strict';
+
+const STAGES = ['readiness','firmware','bios','bmc-baseline','install','clusterjoin'];
+const STAGE_LABEL = { 'readiness':'Readiness','firmware':'Firmware','bios':'BIOS','bmc-baseline':'BMC Baseline','install':'Install','clusterjoin':'Cluster Join' };
+const ICON = { OK:'✓', WARN:'!', FAIL:'✕', SKIP:'»', INFO:'·' };
+
+const state = {
+  fleet: [], runs: [], runRows: {}, live: null, wasLive: false,
+  tab: 'grid', filters: { Platform:'', Hypervisor:'', Cluster:'', Rack:'' },
+  selectedHost: '', openRun: null, detail: null,
+  editor: null, setupMsg: '', importNote: '',
+};
+
+const COLS = ['IP','Hostname','Platform','Hypervisor','Rack','BiosProfile','Cluster'];
+const PLATFORMS = ['dell','lenovo'];
+const HYPERVISORS = ['esxi','ahv','proxmox','hyperv'];
+
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtRunId = (id) => `${id.slice(0,4)}-${id.slice(4,6)}-${id.slice(6,8)} ${id.slice(9,11)}:${id.slice(11,13)}:${id.slice(13,15)}`;
+const fmtTs = (ts) => (ts || '').replace('T', ' ');
+
+async function getJson(url) {
+  const r = await fetch(url);
+  if (r.status === 204) return null;
+  if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
+  return r.json();
+}
+
+async function postJson(url, obj) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-InfraServerSetup': '1' },
+    body: JSON.stringify(obj),
+  });
+  let res = null;
+  try { res = await r.json(); } catch (e) { /* non-JSON error body */ }
+  if (!r.ok) throw new Error((res && res.error) || 'HTTP ' + r.status);
+  return res;
+}
+
+// ---- data ------------------------------------------------------------------
+
+async function loadAll() {
+  const [meta, fleet, runs] = await Promise.all([getJson('/api/meta'), getJson('/api/fleet'), getJson('/api/runs')]);
+  $('#repoPath').textContent = meta.deployRepo;
+  state.fleet = fleet || [];
+  state.runs = runs || [];
+  const rowSets = await Promise.all(state.runs.map(r => getJson('/api/runs/' + r.id)));
+  state.runs.forEach((r, i) => { state.runRows[r.id] = rowSets[i] || []; });
+  state.live = await getJson('/api/live');
+  state.wasLive = !!state.live;
+}
+
+// latest non-INFO row per host|stage, runs in chronological order, live last
+function computeLatest() {
+  const latest = {};
+  const runsAsc = [...state.runs].sort((a, b) => a.id.localeCompare(b.id));
+  const apply = (rows, runId) => {
+    for (const r of rows || []) {
+      if (!r.Host || !r.Stage || r.Status === 'INFO') continue;
+      latest[r.Host + '|' + r.Stage] = { status: r.Status, msg: r.Message, ts: r.Timestamp, run: runId };
+    }
+  };
+  for (const run of runsAsc) apply(state.runRows[run.id], run.id);
+  apply(state.live, 'live');
+  return latest;
+}
+
+function visibleFleet() {
+  return state.fleet.filter(h =>
+    Object.entries(state.filters).every(([k, v]) => !v || h[k] === v));
+}
+
+// ---- summary tiles -----------------------------------------------------------
+
+function renderTiles(latest) {
+  const hosts = state.fleet.map(h => h.Hostname);
+  let ok = 0, warn = 0, fail = 0, nodata = 0;
+  for (const h of hosts) {
+    const sts = STAGES.map(s => latest[h + '|' + s]).filter(Boolean).map(x => x.status);
+    if (!sts.length) { nodata++; continue; }
+    if (sts.includes('FAIL')) fail++;
+    else if (sts.includes('WARN')) warn++;
+    else ok++;
+  }
+  const tile = (v, l, color) =>
+    `<div class="tile"><div class="v">${v}</div><div class="l">${color ? `<span class="dot" style="background:${color}"></span>` : ''}${l}</div></div>`;
+  $('#tiles').innerHTML =
+    tile(hosts.length, 'Nodes', '') +
+    tile(ok, 'Healthy', 'var(--st-ok)') +
+    tile(warn, 'Warnings', 'var(--st-warn)') +
+    tile(fail, 'Failed', 'var(--st-fail)') +
+    tile(nodata, 'No data', 'var(--st-skip)') +
+    tile(state.runs.length + (state.live ? 1 : 0), 'Runs', '');
+}
+
+// ---- fleet grid ----------------------------------------------------------------
+
+function renderFilters() {
+  const opts = (key) => {
+    const vals = [...new Set(state.fleet.map(h => h[key]).filter(Boolean))].sort();
+    return `<select data-f="${key}"><option value="">${key}: all</option>` +
+      vals.map(v => `<option ${state.filters[key] === v ? 'selected' : ''}>${esc(v)}</option>`).join('') + '</select>';
+  };
+  return `<div class="filters"><span class="flabel">Filter</span>${opts('Platform')}${opts('Hypervisor')}${opts('Cluster')}${opts('Rack')}</div>`;
+}
+
+function renderGrid(latest) {
+  const hosts = visibleFleet();
+  let html = renderFilters();
+  html += '<table><thead><tr><th>Host</th>' +
+    STAGES.map(s => `<th class="center">${STAGE_LABEL[s]}</th>`).join('') +
+    '<th>Progress</th></tr></thead><tbody>';
+  for (const h of hosts) {
+    html += `<tr><td><span class="hostname" data-host="${esc(h.Hostname)}">${esc(h.Hostname)}</span>` +
+      `<div class="meta">${esc(h.IP)} &middot; ${esc(h.Platform)} &middot; ${esc(h.Hypervisor)} &middot; ${esc(h.Cluster)} &middot; ${esc(h.Rack)}</div></td>`;
+    const segs = [];
+    for (const s of STAGES) {
+      const cell = latest[h.Hostname + '|' + s];
+      if (!cell) {
+        html += `<td class="center"><span class="cell st-none"></span></td>`;
+        segs.push('');
+      } else {
+        const title = `${esc(h.Hostname)} / ${STAGE_LABEL[s]}: ${cell.status} - ${esc(cell.msg)}`;
+        html += `<td class="center"><span class="cell st-${cell.status}" title="${title}" ` +
+          `data-host="${esc(h.Hostname)}" data-stage="${s}">${ICON[cell.status] || '?'}</span></td>`;
+        segs.push(cell.status);
+      }
+    }
+    html += `<td><div class="bar">${segs.map(s => `<i class="${s ? 'st-' + s : ''}"></i>`).join('')}</div></td></tr>`;
+  }
+  html += '</tbody></table>';
+  if (!hosts.length) html += '<div class="empty">No hosts match the current filters.</div>';
+  if (state.detail) {
+    const d = state.detail;
+    html += `<div class="detail"><span class="x" data-close="1">&#10005;</span>` +
+      `<b>${esc(d.host)}</b> &middot; ${STAGE_LABEL[d.stage]} &middot; ` +
+      `<span style="color:var(--st-${d.status.toLowerCase()})">${ICON[d.status]} ${d.status}</span><br>` +
+      `${esc(d.msg)}<br><span class="meta">${fmtTs(d.ts)} &middot; run ${d.run === 'live' ? 'LIVE' : fmtRunId(d.run)}</span></div>`;
+  }
+  return html;
+}
+
+// ---- run history -----------------------------------------------------------------
+
+function renderRuns() {
+  let html = '';
+  // stats panels
+  const failByStage = {}, failByHost = {};
+  const allRuns = [...state.runs];
+  for (const run of allRuns) {
+    for (const r of state.runRows[run.id] || []) {
+      if (r.Status === 'FAIL') {
+        failByStage[r.Stage] = (failByStage[r.Stage] || 0) + 1;
+        failByHost[r.Host] = (failByHost[r.Host] || 0) + 1;
+      }
+    }
+  }
+  const maxStage = Math.max(1, ...Object.values(failByStage));
+  const statlines = (obj, max) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([k, n]) => `<div class="statline"><span class="n">${n}</span><span style="min-width:110px">${esc(k)}</span>` +
+      `<span class="track"><span class="fill" style="width:${Math.round(n / max * 100)}%;display:block"></span></span></div>`).join('')
+    || '<div class="meta">No failures recorded.</div>';
+  html += `<div class="panelrow"><div class="panel"><h3>Failures by stage (all runs)</h3>${statlines(failByStage, maxStage)}</div>` +
+    `<div class="panel"><h3>Repeat-offender hosts</h3>${statlines(failByHost, Math.max(1, ...Object.values(failByHost)))}</div></div>`;
+
+  const chip = (label, n, color) => n ? `<span class="chip"><span class="dot" style="background:${color}"></span>${n} ${label}</span>` : '';
+  if (state.live) {
+    html += `<div class="runcard"><div class="runhead"><span class="rid" style="color:#ff8f8f">&#9679; LIVE RUN</span>` +
+      `<span class="rmeta">${state.live.length} rows so far - see live log below</span></div></div>`;
+  }
+  for (const run of state.runs) {
+    const open = state.openRun === run.id;
+    html += `<div class="runcard"><div class="runhead" data-run="${run.id}">` +
+      `<span class="rid">${fmtRunId(run.id)}</span>` +
+      `<span>${chip('OK', run.counts.OK, 'var(--st-ok)')}${chip('WARN', run.counts.WARN, 'var(--st-warn)')}` +
+      `${chip('FAIL', run.counts.FAIL, 'var(--st-fail)')}${chip('SKIP', run.counts.SKIP, 'var(--st-skip)')}</span>` +
+      `<span class="rmeta">${run.hosts.length} host(s) &middot; ${run.rows} rows &middot; ${fmtTs(run.started)} &rarr; ${fmtTs(run.ended).slice(11)}</span></div>`;
+    if (open) {
+      html += '<div class="runbody"><table><thead><tr><th>Time</th><th>Host</th><th>Stage</th><th>Status</th><th>Message</th></tr></thead><tbody>';
+      for (const r of state.runRows[run.id] || []) {
+        html += `<tr><td class="meta">${fmtTs(r.Timestamp).slice(11)}</td><td>${esc(r.Host)}</td><td>${STAGE_LABEL[r.Stage] || esc(r.Stage)}</td>` +
+          `<td><span class="cell st-${r.Status}" style="cursor:default">${ICON[r.Status] || '?'}</span> ${r.Status}</td><td>${esc(r.Message)}</td></tr>`;
+      }
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+  }
+  if (!state.runs.length && !state.live) html += '<div class="empty">No runs found in logs\\.</div>';
+  return html;
+}
+
+// ---- host timeline ------------------------------------------------------------------
+
+function renderHost() {
+  const hosts = state.fleet.map(h => h.Hostname);
+  if (!state.selectedHost && hosts.length) state.selectedHost = hosts[0];
+  let html = `<div class="filters"><span class="flabel">Host</span><select data-hostsel="1">` +
+    hosts.map(h => `<option ${h === state.selectedHost ? 'selected' : ''}>${esc(h)}</option>`).join('') + '</select></div>';
+
+  const runsAsc = [...state.runs].sort((a, b) => a.id.localeCompare(b.id));
+  const blocks = [];
+  for (const run of runsAsc) {
+    const rows = (state.runRows[run.id] || []).filter(r => r.Host === state.selectedHost);
+    if (rows.length) blocks.push({ label: 'Run ' + fmtRunId(run.id), rows });
+  }
+  if (state.live) {
+    const rows = state.live.filter(r => r.Host === state.selectedHost);
+    if (rows.length) blocks.push({ label: 'LIVE RUN', rows });
+  }
+  if (!blocks.length) return html + `<div class="empty">No log rows for ${esc(state.selectedHost)} yet.</div>`;
+
+  for (const b of blocks) {
+    html += `<div class="stagegroup"><h3>${b.label}</h3><table><thead><tr><th>Time</th><th>Stage</th><th>Status</th><th>Message</th></tr></thead><tbody>`;
+    for (const r of b.rows) {
+      html += `<tr><td class="meta">${fmtTs(r.Timestamp)}</td><td>${STAGE_LABEL[r.Stage] || esc(r.Stage)}</td>` +
+        `<td><span class="cell st-${r.Status}" style="cursor:default">${ICON[r.Status] || '?'}</span> ${r.Status}</td><td>${esc(r.Message)}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  return html;
+}
+
+// ---- triage --------------------------------------------------------------------------
+
+function renderTriage(latest) {
+  const items = [];
+  for (const [key, v] of Object.entries(latest)) {
+    if (v.status !== 'FAIL' && v.status !== 'WARN') continue;
+    const [host, stage] = key.split('|');
+    items.push({ host, stage, ...v });
+  }
+  if (!items.length) return '<div class="empty">Nothing needs attention - latest status is clean across the fleet.</div>';
+  let html = '';
+  for (const status of ['FAIL', 'WARN']) {
+    for (const stage of STAGES) {
+      const group = items.filter(i => i.stage === stage && i.status === status)
+        .sort((a, b) => a.host.localeCompare(b.host));
+      if (!group.length) continue;
+      html += `<div class="stagegroup"><h3><span style="color:var(--st-${status.toLowerCase()})">${ICON[status]} ${status}</span> &middot; ${STAGE_LABEL[stage]} (${group.length})</h3>`;
+      for (const g of group) {
+        html += `<div class="tri ${status === 'WARN' ? 'warn' : ''}"><span class="who hostname" data-host="${esc(g.host)}">${esc(g.host)}</span> - ${esc(g.msg)}` +
+          `<div class="when">${fmtTs(g.ts)} &middot; run ${g.run === 'live' ? 'LIVE' : fmtRunId(g.run)}</div></div>`;
+      }
+      html += '</div>';
+    }
+  }
+  return html;
+}
+
+// ---- fleet setup --------------------------------------------------------------------------
+
+function ensureEditor() {
+  if (!state.editor) state.editor = state.fleet.map(h => ({ ...h }));
+}
+
+function validateFleet(rows) {
+  const errors = [];
+  const seenIp = {}, seenHost = {};
+  rows.forEach((r, i) => {
+    const n = i + 1;
+    const ip = (r.IP || '').trim(), hn = (r.Hostname || '').trim();
+    if (!ip) errors.push(`Row ${n}: IP is required`);
+    else if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) || ip.split('.').some(o => +o > 255))
+      errors.push(`Row ${n}: "${ip}" is not a valid IPv4 address`);
+    else if (seenIp[ip]) errors.push(`Row ${n}: duplicate IP ${ip} (also row ${seenIp[ip]})`);
+    else seenIp[ip] = n;
+    if (!hn) errors.push(`Row ${n}: Hostname is required`);
+    else if (seenHost[hn]) errors.push(`Row ${n}: duplicate hostname ${hn} (also row ${seenHost[hn]})`);
+    else seenHost[hn] = n;
+    const p = (r.Platform || '').trim().toLowerCase();
+    if (p && !PLATFORMS.includes(p)) errors.push(`Row ${n}: unknown platform "${p}" (dell or lenovo)`);
+    const h = (r.Hypervisor || '').trim().toLowerCase();
+    if (h && !HYPERVISORS.includes(h)) errors.push(`Row ${n}: unknown hypervisor "${h}" (${HYPERVISORS.join(', ')})`);
+  });
+  return errors;
+}
+
+// Parse rows copied out of Excel (tab-separated) or a CSV. Header names are
+// matched loosely; without a recognizable header the standard column order is assumed.
+function parsePaste(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return { rows: [], note: 'Nothing to import.' };
+  const delim = lines[0].includes('\t') ? '\t' : ',';
+  const grid = lines.map(l => l.split(delim).map(c => c.trim().replace(/^"(.*)"$/, '$1')));
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const HEADER_MAP = {
+    ip:'IP', ipaddress:'IP', bmcip:'IP', idracip:'IP', xccip:'IP', mgmtip:'IP', oobip:'IP',
+    hostname:'Hostname', host:'Hostname', name:'Hostname', server:'Hostname', servername:'Hostname', node:'Hostname',
+    platform:'Platform', vendor:'Platform', make:'Platform', bmc:'Platform', bmctype:'Platform',
+    hypervisor:'Hypervisor', hv:'Hypervisor', os:'Hypervisor',
+    rack:'Rack', location:'Rack',
+    biosprofile:'BiosProfile', bios:'BiosProfile', profile:'BiosProfile',
+    cluster:'Cluster', clustername:'Cluster',
+  };
+  const mapped = grid[0].map(c => HEADER_MAP[norm(c)] || null);
+  const looksHeader = mapped.filter(Boolean).length >= 2 && !/^\d{1,3}\./.test(grid[0][0]);
+  let colMap, start, note;
+  if (looksHeader) {
+    colMap = mapped; start = 1;
+    const hits = mapped.map((m, i) => m ? `${grid[0][i]} → ${m}` : null).filter(Boolean);
+    note = `Header row detected. Matched: ${hits.join(', ')}. Unmatched columns were ignored.`;
+  } else {
+    colMap = COLS.slice(0, grid[0].length); start = 0;
+    note = 'No header row detected - columns taken in order: ' + colMap.join(', ') + '.';
+  }
+  const rows = grid.slice(start).map(cells => {
+    const r = {}; COLS.forEach(c => { r[c] = ''; });
+    cells.forEach((v, i) => { if (colMap[i]) r[colMap[i]] = v; });
+    r.Platform = r.Platform.toLowerCase(); r.Hypervisor = r.Hypervisor.toLowerCase();
+    return r;
+  });
+  return { rows, note: `${rows.length} row(s) parsed. ${note}` };
+}
+
+function renderSetup() {
+  ensureEditor();
+  const rows = state.editor;
+  let html = `<div class="panel" style="margin-bottom:14px"><h3>Import from Excel</h3>
+    <div class="vnote" style="margin:0 0 8px">Copy the server table in Excel (with or without the header row) and paste it below.
+    Recognized columns: IP, Hostname, Platform, Hypervisor, Rack, BiosProfile, Cluster - common variants like "iDRAC IP" or "Vendor" are matched automatically.</div>
+    <textarea class="paste" id="pasteBox" placeholder="10.0.10.11\tesx-node-01\tdell\tesxi\tR1\tperf-uefi\tPROD-CL01"></textarea>
+    <div class="btnrow">
+      <button class="btn" data-action="import-replace">Import (replace list)</button>
+      <button class="btn" data-action="import-append">Import (append)</button>
+      <span class="vnote">${esc(state.importNote)}</span>
+    </div></div>`;
+
+  html += '<table class="setup-table"><thead><tr><th></th>' +
+    COLS.map(c => `<th>${c}</th>`).join('') + '<th></th></tr></thead><tbody>';
+  rows.forEach((r, i) => {
+    const sel = (key, opts) =>
+      `<select data-eidx="${i}" data-ekey="${key}"><option value=""></option>` +
+      opts.map(o => `<option ${(r[key] || '').toLowerCase() === o ? 'selected' : ''}>${o}</option>`).join('') + '</select>';
+    html += `<tr><td class="rownum">${i + 1}</td>`;
+    for (const c of COLS) {
+      if (c === 'Platform') html += `<td>${sel(c, PLATFORMS)}</td>`;
+      else if (c === 'Hypervisor') html += `<td>${sel(c, HYPERVISORS)}</td>`;
+      else html += `<td><input data-eidx="${i}" data-ekey="${c}" value="${esc(r[c])}"></td>`;
+    }
+    html += `<td><button class="btn danger-ghost" data-action="del-row" data-eidx="${i}" title="Remove host">&#10005;</button></td></tr>`;
+  });
+  html += '</tbody></table>';
+  if (!rows.length) html += '<div class="empty">No hosts yet - paste from Excel above or add a row.</div>';
+
+  html += `<div class="btnrow">
+      <button class="btn" data-action="add-row">+ Add host</button>
+      <span style="flex:1"></span>
+      <button class="btn" data-action="discard">Discard changes</button>
+      <button class="btn primary" id="saveFleetBtn" data-action="save-fleet">Save to servers.csv</button>
+    </div>
+    <div id="fleetErrors"></div>
+    ${state.setupMsg ? `<div class="vok">${esc(state.setupMsg)}</div>` : ''}
+    <div class="vnote">Saving overwrites config\\servers.csv (previous file is kept as servers.csv.bak). This only edits the fleet definition - no hardware is contacted.</div>`;
+  return html;
+}
+
+function updateSetupValidation() {
+  const box = $('#fleetErrors');
+  if (!box) return;
+  const errors = validateFleet(state.editor || []);
+  box.innerHTML = errors.map(e => `<div class="verr">${esc(e)}</div>`).join('');
+  const btn = $('#saveFleetBtn');
+  if (btn) btn.disabled = errors.length > 0 || !(state.editor || []).length;
+}
+
+async function saveFleet() {
+  const errors = validateFleet(state.editor || []);
+  if (errors.length) return;
+  try {
+    const res = await postJson('/api/fleet', state.editor);
+    state.setupMsg = `Saved ${res.hosts} host(s) to servers.csv` + (res.backup ? ' (previous kept as servers.csv.bak)' : '');
+    state.fleet = await getJson('/api/fleet');
+    state.editor = null;
+    state.importNote = '';
+    render();
+  } catch (err) {
+    const box = $('#fleetErrors');
+    if (box) box.innerHTML = `<div class="verr">Save failed: ${esc(err.message)}</div>`;
+  }
+}
+
+// ---- deploy --------------------------------------------------------------------------
+
+function ensureDeploy() {
+  if (!state.dep) state.dep = { hosts: {}, stages: { readiness: true }, user: 'root', pass: '', arm: false, msg: '', err: '' };
+}
+
+function deploySelection() {
+  const d = state.dep;
+  return {
+    hosts: state.fleet.map(h => h.Hostname).filter(h => d.hosts[h]),
+    stages: STAGES.filter(s => d.stages[s]),
+  };
+}
+
+function renderDeploy() {
+  ensureDeploy();
+  const d = state.dep;
+  if (!state.fleet.length) return '<div class="empty">No fleet defined - add hosts in Fleet Setup first.</div>';
+
+  let html = '<div class="panelrow">';
+  html += '<div class="panel"><h3>Hosts</h3><div class="btnrow" style="margin-top:0">' +
+    '<button class="btn" data-action="dep-all">Select all</button>' +
+    '<button class="btn" data-action="dep-none">Clear</button></div>' +
+    state.fleet.map(h =>
+      `<label class="chk"><input type="checkbox" data-dhost="${esc(h.Hostname)}" ${d.hosts[h.Hostname] ? 'checked' : ''}>` +
+      `<b>${esc(h.Hostname)}</b> <span class="meta">${esc(h.IP)} &middot; ${esc(h.Platform)} &middot; ${esc(h.Hypervisor)}</span></label>`
+    ).join('') + '</div>';
+
+  html += '<div class="panel"><h3>Stages</h3>' +
+    STAGES.map(s =>
+      `<label class="chk"><input type="checkbox" data-dstage="${s}" ${d.stages[s] ? 'checked' : ''}>${STAGE_LABEL[s]}</label>`
+    ).join('') +
+    `<h3 style="margin-top:16px">BMC credentials</h3>
+     <div class="cred"><span>Username</span><input data-dep="user" value="${esc(d.user)}" autocomplete="off"></div>
+     <div class="cred"><span>Password</span><input data-dep="pass" type="password" value="${esc(d.pass)}" autocomplete="off"></div>
+     <div class="vnote">Sent only to this local InfraServerSetup server and handed to the pipeline in memory -
+     never written to disk, logs, or a command line. The run uses -Force (no console
+     confirmations), so review the selection before launching. A minimized PowerShell
+     window opens for the run - restore it to watch raw output or Ctrl+C to abort.</div>
+    </div></div>`;
+
+  const sel = deploySelection();
+  const ready = sel.hosts.length && sel.stages.length && d.pass;
+  html += `<div class="btnrow">
+      <span class="vnote">${sel.hosts.length} host(s) &middot; stages: ${sel.stages.join(', ') || 'none'}</span>
+      <span style="flex:1"></span>
+      ${d.arm ? '<button class="btn" data-action="dep-disarm">Cancel</button>' : ''}
+      <button class="btn primary" id="depLaunchBtn" data-action="${d.arm ? 'dep-launch' : 'dep-arm'}" ${ready ? '' : 'disabled'}>
+        ${d.arm ? `Confirm: run ${sel.stages.length} stage(s) on ${sel.hosts.length} host(s) now` : 'Launch deployment...'}
+      </button>
+    </div>`;
+  if (d.err) html += `<div class="verr">${esc(d.err)}</div>`;
+  if (d.msg) html += `<div class="vok">${esc(d.msg)}</div>`;
+  return html;
+}
+
+async function launchDeploy() {
+  const d = state.dep;
+  const sel = deploySelection();
+  try {
+    const res = await postJson('/api/deploy', { hosts: sel.hosts, stages: sel.stages, user: d.user, pass: d.pass });
+    d.msg = `Deployment launched (PID ${res.pid}): ${res.hosts} host(s), stages: ${sel.stages.join(', ')}. The live view will pick it up within a few seconds.`;
+    d.err = ''; d.pass = ''; d.arm = false;
+  } catch (err) {
+    d.err = 'Launch failed: ' + err.message;
+    d.msg = ''; d.arm = false;
+  }
+  render();
+}
+
+// ---- live tail --------------------------------------------------------------------------
+
+function renderTail() {
+  const on = !!(state.live && state.live.length);
+  $('#liveBadge').classList.toggle('hidden', !on);
+  $('#tail').classList.toggle('hidden', !on);
+  if (!on) return;
+  const rows = state.live.slice(-30);
+  $('#tailBody').innerHTML = rows.map(r =>
+    `<div>${fmtTs(r.Timestamp).slice(11)}  <span style="color:var(--ink)">${esc(r.Host).padEnd ? esc(r.Host) : esc(r.Host)}</span>` +
+    `  ${esc(r.Stage)}  <span class="st" style="color:var(--st-${(r.Status || 'info').toLowerCase()})">${esc(r.Status)}</span>  ${esc(r.Message)}</div>`).join('');
+  $('#tailBody').scrollTop = $('#tailBody').scrollHeight;
+}
+
+// ---- render dispatch ------------------------------------------------------------------------
+
+function render() {
+  const latest = computeLatest();
+  renderTiles(latest);
+  renderTail();
+  const view = $('#view');
+  if (state.tab === 'grid') view.innerHTML = renderGrid(latest);
+  else if (state.tab === 'runs') view.innerHTML = renderRuns();
+  else if (state.tab === 'host') view.innerHTML = renderHost();
+  else if (state.tab === 'setup') { view.innerHTML = renderSetup(); updateSetupValidation(); }
+  else if (state.tab === 'deploy') view.innerHTML = renderDeploy();
+  else view.innerHTML = renderTriage(latest);
+}
+
+// ---- events -----------------------------------------------------------------------------------
+
+$('#tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b) return;
+  state.tab = b.dataset.tab;
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x === b));
+  render();
+});
+
+$('#view').addEventListener('click', (e) => {
+  const cell = e.target.closest('.cell[data-host]');
+  if (cell) {
+    const latest = computeLatest();
+    const v = latest[cell.dataset.host + '|' + cell.dataset.stage];
+    state.detail = v ? { host: cell.dataset.host, stage: cell.dataset.stage, ...v } : null;
+    render(); return;
+  }
+  if (e.target.closest('[data-close]')) { state.detail = null; render(); return; }
+  const host = e.target.closest('.hostname[data-host]');
+  if (host) {
+    state.selectedHost = host.dataset.host;
+    state.tab = 'host';
+    document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('active', x.dataset.tab === 'host'));
+    render(); return;
+  }
+  const run = e.target.closest('.runhead[data-run]');
+  if (run) { state.openRun = state.openRun === run.dataset.run ? null : run.dataset.run; render(); return; }
+
+  const act = e.target.closest('[data-action]');
+  if (!act) return;
+  const action = act.dataset.action;
+  if (action === 'import-replace' || action === 'import-append') {
+    const parsed = parsePaste($('#pasteBox').value);
+    state.importNote = parsed.note;
+    if (parsed.rows.length) {
+      ensureEditor();
+      state.editor = action === 'import-replace' ? parsed.rows : state.editor.concat(parsed.rows);
+    }
+    state.setupMsg = '';
+    render();
+  } else if (action === 'add-row') {
+    ensureEditor();
+    const blank = {}; COLS.forEach(c => { blank[c] = ''; });
+    state.editor.push(blank);
+    state.setupMsg = '';
+    render();
+  } else if (action === 'del-row') {
+    state.editor.splice(+act.dataset.eidx, 1);
+    state.setupMsg = '';
+    render();
+  } else if (action === 'discard') {
+    state.editor = null; state.setupMsg = ''; state.importNote = '';
+    render();
+  } else if (action === 'save-fleet') {
+    saveFleet();
+  } else if (action === 'dep-all' || action === 'dep-none') {
+    ensureDeploy();
+    state.fleet.forEach(h => { state.dep.hosts[h.Hostname] = action === 'dep-all'; });
+    state.dep.arm = false; state.dep.msg = '';
+    render();
+  } else if (action === 'dep-arm') {
+    state.dep.arm = true; state.dep.msg = ''; state.dep.err = '';
+    render();
+  } else if (action === 'dep-disarm') {
+    state.dep.arm = false;
+    render();
+  } else if (action === 'dep-launch') {
+    launchDeploy();
+  }
+});
+
+$('#view').addEventListener('change', (e) => {
+  if (e.target.matches('[data-dhost]')) {
+    ensureDeploy();
+    state.dep.hosts[e.target.dataset.dhost] = e.target.checked;
+    state.dep.arm = false; render();
+  } else if (e.target.matches('[data-dstage]')) {
+    ensureDeploy();
+    state.dep.stages[e.target.dataset.dstage] = e.target.checked;
+    state.dep.arm = false; render();
+  }
+});
+
+// Editor cell edits update state in place - no re-render, so typing keeps focus.
+$('#view').addEventListener('input', (e) => {
+  if (e.target.matches('[data-eidx][data-ekey]')) {
+    state.editor[+e.target.dataset.eidx][e.target.dataset.ekey] = e.target.value;
+    state.setupMsg = '';
+    updateSetupValidation();
+  } else if (e.target.matches('[data-dep]')) {
+    state.dep[e.target.dataset.dep] = e.target.value;
+    state.dep.arm = false;
+    const btn = $('#depLaunchBtn');
+    if (btn) {
+      const sel = deploySelection();
+      btn.disabled = !(sel.hosts.length && sel.stages.length && state.dep.pass);
+      btn.textContent = 'Launch deployment...';
+      btn.dataset.action = 'dep-arm';
+    }
+  }
+});
+
+$('#view').addEventListener('change', (e) => {
+  if (e.target.matches('select[data-f]')) { state.filters[e.target.dataset.f] = e.target.value; render(); }
+  if (e.target.matches('select[data-hostsel]')) { state.selectedHost = e.target.value; render(); }
+});
+
+// ---- live polling -------------------------------------------------------------------------------
+
+async function pollLive() {
+  try {
+    const live = await getJson('/api/live');
+    if (live) {
+      state.live = live;
+      state.wasLive = true;
+      // Don't wipe in-progress typing on the form tabs - refresh chrome only.
+      if (state.tab === 'setup' || state.tab === 'deploy') {
+        renderTiles(computeLatest());
+        renderTail();
+      } else {
+        render();
+      }
+    } else if (state.wasLive) {
+      // run just finalized: reload run list so it appears in history
+      state.live = null;
+      state.wasLive = false;
+      const runs = await getJson('/api/runs');
+      state.runs = runs || [];
+      const missing = state.runs.filter(r => !state.runRows[r.id]);
+      const rowSets = await Promise.all(missing.map(r => getJson('/api/runs/' + r.id)));
+      missing.forEach((r, i) => { state.runRows[r.id] = rowSets[i] || []; });
+      render();
+    }
+  } catch (err) { /* transient poll errors are fine */ }
+}
+
+// ---- boot ------------------------------------------------------------------------------------------
+
+(async () => {
+  try {
+    await loadAll();
+    render();
+    setInterval(pollLive, 3000);
+  } catch (err) {
+    const b = $('#errorBanner');
+    b.textContent = 'InfraServerSetup could not load data: ' + err.message;
+    b.classList.remove('hidden');
+  }
+})();
+</script>
+</body>
+</html>

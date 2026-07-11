@@ -39,6 +39,25 @@ readiness  ->  firmware  ->  bios  ->  bmc-baseline  ->  install  ->  clusterjoi
 - **clusterjoin** -- poll until the hypervisor is up, then join vCenter / Prism /
   Proxmox cluster / failover cluster. *Join verbs stubbed pending live hardware.*
 
+## InfraServerSetup — web dashboard & launcher
+
+[`InfraServerSetup\`](InfraServerSetup/) is a Foundation-style local web UI on
+top of this pipeline: double-click `InfraServerSetup\InfraServerSetup.cmd` and
+a browser opens on `http://localhost:8474/` with
+
+- **live per-node stage progress** during a run (plus full run history,
+  per-host timelines, and a failure-triage worklist),
+- **Fleet Setup** — build `config\servers.csv` by pasting the server table
+  straight from Excel (validated), and
+- **Deploy** — pick hosts/stages and launch `Invoke-Deployment.ps1` from the
+  browser (credentials go to the localhost server only and reach the pipeline
+  via in-memory environment variables; web launches run `-Force`, with a
+  two-step confirm in the UI instead of console gates).
+
+See [`InfraServerSetup\README.md`](InfraServerSetup/README.md) for details and
+the demo mode (`tools\New-SampleData.ps1`). The console workflow below works
+unchanged with or without the dashboard.
+
 ## Quick start
 
 ```powershell

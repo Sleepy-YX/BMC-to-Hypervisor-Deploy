@@ -64,6 +64,18 @@ before wiring the XCC3 bmc-baseline path.
 - Document confirmed attribute names and fixes in `docs\` as they're found --
   treat these as load-bearing, not optional cleanup.
 
+## InfraServerSetup dashboard (InfraServerSetup\)
+Foundation-style local web UI over this pipeline (PowerShell 5.1 HttpListener +
+self-contained vanilla-JS SPA, localhost-only, port 8474). Reads servers.csv +
+deploy_log CSVs; its only writes are config\servers.csv (Fleet Setup, with .bak)
+and config\servers.deploy.csv (web-launched host subset). Coupled to this repo in
+two places in lib\Common.psm1 -- keep them in sync with the dashboard:
+- Add-LogRow write-through to logs\deploy_log_live.csv (live view); removed by
+  Save-DeployLog on finalize. Must stay non-fatal.
+- Read-BmcCredential consumes INFRASERVERSETUP_BMC_USER/PASS env vars (web-launch
+  credential path; consumed and cleared on first read, never on command line/disk).
+Web launches run Invoke-Deployment with -Force; the UI has a two-step confirm.
+
 ## Tools & environment
 - `racadm` (Dell), `OneCLI` (Lenovo); PowerCLI (ESXi), REST/Foundation (AHV),
   PVE API (Proxmox), WinRM/FailoverClustering (Azure Stack HCI).

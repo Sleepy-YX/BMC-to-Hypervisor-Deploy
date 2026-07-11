@@ -1,6 +1,11 @@
 # Real inventory & config may contain site data — commit only the .example files.
 config/servers.csv
+config/servers.csv.bak
+config/servers.deploy.csv
 config/*.local.psd1
+
+# InfraServerSetup dashboard: generated demo data (recreate with tools\New-SampleData.ps1)
+InfraServerSetup/sample/
 
 # Run logs
 logs/*.csv

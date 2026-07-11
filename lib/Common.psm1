@@ -19,6 +19,10 @@ $ErrorActionPreference = 'Stop'
 
 $script:LogRows = [System.Collections.Generic.List[object]]::new()
 
+# Live write-through target: InfraServerSetup (and anything else) can tail an
+# in-progress run here; Save-DeployLog removes it when the run is finalized.
+$script:LiveLogPath = Join-Path $PSScriptRoot '..\logs\deploy_log_live.csv'
+
 function Write-Stage {
     <# Console line with a consistent, greppable prefix. #>
     param(
@@ -46,13 +50,27 @@ function Add-LogRow {
         [Parameter(Mandatory)][string]$Status,
         [string]$Message = ''
     )
-    $script:LogRows.Add([pscustomobject]@{
+    $row = [pscustomobject]@{
         Timestamp = (Get-Date).ToString('s')
         Host      = $Host_
         Stage     = $Stage
         Status    = $Status
         Message   = $Message
-    })
+    }
+    $script:LogRows.Add($row)
+
+    # Write-through for live dashboards (InfraServerSetup). Must never break a run:
+    # a full disk or locked file only costs the live view, not the deployment.
+    try {
+        $liveDir = Split-Path $script:LiveLogPath -Parent
+        if (-not (Test-Path $liveDir)) { New-Item -ItemType Directory -Path $liveDir -Force | Out-Null }
+        $csv = $row | ConvertTo-Csv -NoTypeInformation
+        if (-not (Test-Path $script:LiveLogPath)) {
+            $csv | Set-Content -Path $script:LiveLogPath -Encoding UTF8
+        } else {
+            $csv[1] | Add-Content -Path $script:LiveLogPath -Encoding UTF8
+        }
+    } catch { }
 }
 
 function Save-DeployLog {
@@ -62,6 +80,10 @@ function Save-DeployLog {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $path  = Join-Path $LogDir "deploy_log_$stamp.csv"
     $script:LogRows | Export-Csv -Path $path -NoTypeInformation -Encoding UTF8
+    # Run is finalized; drop the live write-through file (non-fatal if locked).
+    try {
+        if (Test-Path $script:LiveLogPath) { Remove-Item $script:LiveLogPath -Force -Confirm:$false }
+    } catch { }
     return (Resolve-Path $path).Path
 }
 
@@ -77,8 +99,21 @@ function Read-BmcCredential {
         Prompt once for the BMC username/password. Password is masked and kept
         only as a SecureString inside the returned PSCredential -- never written
         to disk or the log.
+
+        Non-interactive path: an InfraServerSetup web launch supplies credentials via the
+        INFRASERVERSETUP_BMC_USER / INFRASERVERSETUP_BMC_PASS environment variables of THIS
+        process only (set around the spawn, never on a command line or disk).
+        They are consumed and cleared on first read.
     #>
     param([string]$DefaultUser = 'root')
+    if ($env:INFRASERVERSETUP_BMC_PASS) {
+        $user = if ($env:INFRASERVERSETUP_BMC_USER) { $env:INFRASERVERSETUP_BMC_USER } else { $DefaultUser }
+        $pass = ConvertTo-SecureString -String $env:INFRASERVERSETUP_BMC_PASS -AsPlainText -Force
+        Remove-Item Env:INFRASERVERSETUP_BMC_PASS -ErrorAction SilentlyContinue
+        Remove-Item Env:INFRASERVERSETUP_BMC_USER -ErrorAction SilentlyContinue
+        Write-Host "BMC credentials for '$user' supplied by InfraServerSetup launch." -ForegroundColor DarkGray
+        return [System.Management.Automation.PSCredential]::new($user, $pass)
+    }
     $user = Read-Host "BMC username [$DefaultUser]"
     if ([string]::IsNullOrWhiteSpace($user)) { $user = $DefaultUser }
     $pass = Read-Host "BMC password for '$user'" -AsSecureString
