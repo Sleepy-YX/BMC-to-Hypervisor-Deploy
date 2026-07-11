@@ -1,0 +1,6 @@
+IP,Hostname,Platform,Hypervisor,Rack,BiosProfile,Cluster
+10.0.10.11,esx-node-01,dell,esxi,R1,perf-uefi,PROD-CL01
+10.0.10.12,esx-node-02,dell,esxi,R1,perf-uefi,PROD-CL01
+10.0.20.21,ahv-node-01,lenovo,ahv,R2,,PROD-NTX01
+10.0.30.31,pve-node-01,dell,proxmox,R3,,PVE-CL01
+10.0.40.41,hci-node-01,lenovo,hyperv,R4,,HCI-CL01

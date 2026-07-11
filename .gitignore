@@ -1,0 +1,18 @@
+# Real inventory & config may contain site data — commit only the .example files.
+config/servers.csv
+config/*.local.psd1
+
+# Run logs
+logs/*.csv
+logs/*.log
+!logs/.gitkeep
+
+# Answer files with injected secrets (root passwords, crypted hashes)
+templates/*.local.*
+*.rendered
+
+# Editor / OS cruft
+.vscode/
+.idea/
+Thumbs.db
+*.tmp

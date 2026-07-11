@@ -1,0 +1,24 @@
+# Proxmox VE automated install answer file (proxmox-auto-install-assistant).
+# Bake into the ISO with `proxmox-auto-install-assistant prepare-iso`, or serve
+# it and boot with the fetch-from URL. Docs: pve.proxmox.com automated install.
+
+[global]
+keyboard = "en-us"
+country = "sg"
+fqdn = "<HOSTNAME>.local"                 # template per host from the CSV
+mailto = "admin@local"
+timezone = "Asia/Singapore"
+# Root password — inject at deploy time; do NOT commit a real one.
+root_password = "<ROOT_PASSWORD>"
+
+[network]
+source = "from-answer"
+cidr = "<HOST_IP>/24"
+dns = "<DNS1>"
+gateway = "<GATEWAY>"
+filter.ID_NET_NAME = "*"
+
+[disk-setup]
+filesystem = "zfs"
+zfs.raid = "raid1"
+disk_list = ["sda", "sdb"]
