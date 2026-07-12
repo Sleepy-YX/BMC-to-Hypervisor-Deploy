@@ -29,7 +29,7 @@ Import-Module (Join-Path $root 'lib\Common.psm1') -Force
 Import-Module (Join-Path $root 'lib\Providers\Dell.iDRAC.psm1') -Force
 Import-Module (Join-Path $root 'lib\Providers\Lenovo.XCC3.psm1') -Force
 
-$servers = Import-ServerList -Path $ServerList
+$servers = @(Import-ServerList -Path $ServerList)
 Write-Host "Loaded $($servers.Count) host(s) from $ServerList" -ForegroundColor Cyan
 $cred = Read-BmcCredential
 

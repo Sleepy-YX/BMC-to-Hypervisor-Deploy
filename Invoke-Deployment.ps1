@@ -66,7 +66,8 @@ if ($Stages) {
     $runStages = $allStages[$fromIdx..$toIdx]
 }
 
-$servers = Import-ServerList -Path $ServerList
+# @() guard: a one-host CSV yields a scalar, and .Count/foreach break under StrictMode.
+$servers = @(Import-ServerList -Path $ServerList)
 Write-Host "Loaded $($servers.Count) host(s). Stages: $($runStages -join ' -> ')" -ForegroundColor Cyan
 if ($WhatIf) { Write-Host "DRY RUN (-WhatIf): no changes will be made." -ForegroundColor Yellow }
 

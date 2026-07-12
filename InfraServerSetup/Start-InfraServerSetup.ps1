@@ -186,8 +186,16 @@ function Start-Deployment {
     $deployCsv = Join-Path (Split-Path $serversCsv -Parent) 'servers.deploy.csv'
     $selRows | Export-Csv -Path $deployCsv -NoTypeInformation -Encoding UTF8
 
-    $cmd = "& '{0}' -ServerList '{1}' -Stages {2} -Force" -f
-        $pipeline.Replace("'", "''"), $deployCsv.Replace("'", "''"), ($stages -join ',')
+    # Wrap the run: transcript everything to logs\, and if the pipeline throws,
+    # keep the window open showing the error instead of vanishing without a trace.
+    $transcript = Join-Path $logsDir ("deploy_web_{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $cmd = ('try {{ Start-Transcript -Path ''{3}'' | Out-Null }} catch {{ }}; ' +
+            'try {{ & ''{0}'' -ServerList ''{1}'' -Stages {2} -Force }} ' +
+            'catch {{ Write-Host $_ -ForegroundColor Red; ' +
+            'Read-Host ''Deployment failed - see the error above (also logged to {4}); press Enter to close'' }} ' +
+            'finally {{ try {{ Stop-Transcript | Out-Null }} catch {{ }} }}') -f
+        $pipeline.Replace("'", "''"), $deployCsv.Replace("'", "''"), ($stages -join ','),
+        $transcript.Replace("'", "''"), (Split-Path $transcript -Leaf)
 
     try {
         $env:INFRASERVERSETUP_BMC_USER = $user

@@ -142,10 +142,10 @@ function Import-ServerList {
     #>
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path $Path)) { throw "Server list not found: $Path" }
-    $rows = Import-Csv -Path $Path
+    $rows = @(Import-Csv -Path $Path)   # @(): a one-row CSV must still behave as an array
 
     $required = @('IP', 'Hostname', 'Platform', 'Hypervisor')
-    $have = if ($rows) { $rows[0].psobject.Properties.Name } else { @() }
+    $have = if ($rows.Count) { $rows[0].psobject.Properties.Name } else { @() }
     $missing = $required | Where-Object { $_ -notin $have }
     if ($missing) { throw "Server list is missing required column(s): $($missing -join ', ')" }
 
@@ -158,7 +158,9 @@ function Import-ServerList {
         if ($r.Platform.ToLower()   -notin $validPlatform)   { throw "Row $n ($($r.IP)): Platform '$($r.Platform)' must be one of: $($validPlatform -join ', ')" }
         if ($r.Hypervisor.ToLower() -notin $validHypervisor) { throw "Row $n ($($r.IP)): Hypervisor '$($r.Hypervisor)' must be one of: $($validHypervisor -join ', ')" }
     }
-    return $rows
+    # Comma operator: hand the array back as ONE object so a single-row list
+    # doesn't unwrap to a scalar in the caller.
+    return , $rows
 }
 
 # --- Reachability ------------------------------------------------------------
