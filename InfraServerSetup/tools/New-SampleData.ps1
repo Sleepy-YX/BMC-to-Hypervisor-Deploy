@@ -92,6 +92,29 @@ if ($Mode -eq 'History') {
 
     Get-Random -SetSeed 42 | Out-Null   # deterministic timestamps run-to-run
 
+    # Readiness inventory facts per host: Stage 'fact:<Name>' / Status INFO rows,
+    # exactly what the pipeline's readiness stage now logs (model / serial / fw).
+    $inventory = @{
+        'esx-node-01' = @{ Model = 'PowerEdge R650';      Serial = '7KQ2S31'; Bios = '2.21.2'; BmcFirmware = 'iDRAC 7.10.30.00' }
+        'esx-node-02' = @{ Model = 'PowerEdge R650';      Serial = '7KQ2S32'; Bios = '2.21.2'; BmcFirmware = 'iDRAC 7.10.30.00' }
+        'esx-node-03' = @{ Model = 'PowerEdge R650';      Serial = '7KQ2S33'; Bios = '2.19.1'; BmcFirmware = 'iDRAC 7.00.60.00' }
+        'esx-node-04' = @{ Model = 'PowerEdge R650';      Serial = '7KQ2S34'; Bios = '2.21.2'; BmcFirmware = 'iDRAC 7.10.30.00' }
+        'ahv-node-01' = @{ Model = 'ThinkAgile HX650 V3'; Serial = 'J306TA1';                  BmcFirmware = 'XCC3 4.20' }
+        'ahv-node-02' = @{ Model = 'ThinkAgile HX650 V3'; Serial = 'J306TA2';                  BmcFirmware = 'XCC3 4.20' }
+        'ahv-node-03' = @{ Model = 'ThinkAgile HX650 V3'; Serial = 'J306TA3';                  BmcFirmware = 'XCC3 4.20' }
+        'pve-node-01' = @{ Model = 'PowerEdge R750';      Serial = '9XN4B11'; Bios = '1.15.2'; BmcFirmware = 'iDRAC 7.10.30.00' }
+        'pve-node-02' = @{ Model = 'PowerEdge R750';      Serial = '9XN4B12'; Bios = '1.15.2'; BmcFirmware = 'iDRAC 7.10.30.00' }
+        'hci-node-01' = @{ Model = 'ThinkAgile MX650 V3'; Serial = 'J307MX1';                  BmcFirmware = 'XCC3 4.20' }
+        'hci-node-02' = @{ Model = 'ThinkAgile MX650 V3'; Serial = 'J307MX2';                  BmcFirmware = 'XCC3 4.20' }
+        'hci-node-03' = @{ Model = 'ThinkAgile MX650 V3'; Serial = 'J307MX3';                  BmcFirmware = 'XCC3 3.10' }
+    }
+    function Get-FactSteps {
+        param([string]$H)
+        foreach ($k in @($inventory[$H].Keys | Sort-Object)) {
+            , @($H, "fact:$k", 'INFO', $inventory[$H][$k])
+        }
+    }
+
     # -- Run 1: readiness sweep across the whole fleet (2026-06-28) ------------
     $start = Get-Date '2026-06-28 09:30:12'
     $steps = @(
@@ -108,6 +131,10 @@ if ($Mode -eq 'History') {
         @('hci-node-02', 'readiness', 'OK',   'ping ok; https 443 open; auth ok; XCC3 fw 4.20'),
         @('hci-node-03', 'readiness', 'WARN', 'auth ok but XCC3 fw 3.10 below baseline 4.20 - update before install')
     )
+    # every host except the auth failure gets its inventory facts
+    foreach ($h in ($inventory.Keys | Sort-Object)) {
+        if ($h -ne 'ahv-node-02') { $steps += Get-FactSteps -H $h }
+    }
     Save-Run -Start $start -Rows (New-Run -Start $start -Steps $steps)
 
     # -- Run 2: full pipeline, Dell ESXi nodes (2026-06-30) ---------------------
@@ -173,6 +200,7 @@ if ($Mode -eq 'History') {
         @('hci-node-01', 'readiness',    'OK',   'ping ok; auth ok; XCC3 fw 4.20'),
         @('hci-node-02', 'readiness',    'OK',   'ping ok; auth ok; XCC3 fw 4.20'),
         @('hci-node-03', 'readiness',    'OK',   'ping ok; auth ok; XCC3 updated to 4.20'),
+        @('hci-node-03', 'fact:BmcFirmware', 'INFO', 'XCC3 4.20'),
         @('hci-node-01', 'firmware',     'OK',   'UXSP applied'),
         @('hci-node-02', 'firmware',     'OK',   'UXSP applied'),
         @('hci-node-03', 'firmware',     'OK',   'UXSP applied (fw brought up from 3.10)'),
@@ -193,8 +221,10 @@ if ($Mode -eq 'History') {
 
     # -- Run 6: targeted retries (2026-07-10) -----------------------------------
     $start = Get-Date '2026-07-10 09:18:01'
-    $steps = @(
-        @('ahv-node-02', 'readiness',   'OK',   'ping ok; auth ok'),
+    $steps = @()
+    $steps += , @('ahv-node-02', 'readiness', 'OK', 'ping ok; auth ok')
+    $steps += Get-FactSteps -H 'ahv-node-02'   # first successful auth captures its inventory
+    $steps += @(
         @('ahv-node-02', 'install',     'FAIL', 'Foundation imaging timed out at 41% - suspect cabling on 10G port'),
         @('ahv-node-02', 'clusterjoin', 'SKIP', 'skipped: install stage failed'),
         @('hci-node-03', 'readiness',   'OK',   'ping ok; auth ok; mgmt VLAN reachable after switchport fix'),

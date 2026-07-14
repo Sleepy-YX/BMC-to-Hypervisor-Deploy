@@ -44,12 +44,30 @@ function Invoke-OneCli {
 }
 
 function Get-XCC3Info {
-    <# Read-only inventory -- safe for the audit stage. #>
+    <# Read-only inventory -- safe for the audit stage.
+
+       Model/Serial/Firmware are parsed defensively from the raw inventory text:
+       the exact OneCLI label names are UNCONFIRMED on live XCC3 hardware, so a
+       non-matching label just leaves the field empty (readiness still passes on
+       Reachable alone). Confirm the labels against real `onecli inventory
+       getinfor` output and tighten the patterns then. #>
     param([string]$IP, [pscredential]$Credential)
     $inv = Invoke-OneCli -IP $IP -Credential $Credential -Args @('inventory', 'getinfor')
+    $model = ''; $serial = ''; $fw = ''
+    if (-not $inv.HasError) {
+        foreach ($line in ($inv.Output -split "`r?`n")) {
+            $t = $line.Trim()
+            if (-not $model  -and $t -match '^(Product Name|Machine Type[- ]?Model|Model)\s*[:=]\s*(.+)$') { $model  = $Matches[2].Trim() }
+            if (-not $serial -and $t -match '^Serial(\s*Number)?\s*[:=]\s*(.+)$')                          { $serial = $Matches[2].Trim() }
+            if (-not $fw     -and $t -match '^(BMC|XCC)[^:=]*[Vv]ersion\s*[:=]\s*(.+)$')                   { $fw     = $Matches[2].Trim() }
+        }
+    }
     return [pscustomobject]@{
         Inventory = $inv.Output
         Reachable = -not $inv.HasError
+        Model     = $model
+        Serial    = $serial
+        Firmware  = $fw
     }
 }
 

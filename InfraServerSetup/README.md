@@ -42,7 +42,10 @@ The `.cmd` passes arguments through: `InfraServerSetup.cmd -DeployRepo .\sample`
 
 - **Fleet Grid** — hosts × stages matrix with the latest status per cell
   (✓ OK / ! WARN / ✕ FAIL / » SKIP), per-host progress bar, filters by
-  platform / hypervisor / cluster / rack. Click a cell for the full message.
+  platform / hypervisor / cluster / rack. Click a cell for the full message;
+  hover a stage column header for what that stage does. Under each hostname
+  the grid shows the inventory captured by the readiness stage (model, serial,
+  BIOS, BMC firmware — logged as `fact:*` INFO rows), newest run wins.
 - **Run History** — every run with OK/WARN/FAIL/SKIP counts; click to expand
   the full row log. Includes "failures by stage" and "repeat-offender hosts"
   stats across all runs.
@@ -54,11 +57,16 @@ The `.cmd` passes arguments through: `InfraServerSetup.cmd -DeployRepo .\sample`
   Excel (header names like "iDRAC IP" / "Vendor" are matched automatically;
   without a header row the standard column order is assumed). Validates IPs,
   duplicates, and platform/hypervisor values, then saves `config\servers.csv`.
-- **Deploy** — pick hosts and stages, enter the BMC credentials, and launch
-  `Invoke-Deployment.ps1` with one click (two-step confirm). The selection is
-  written to `config\servers.deploy.csv` so the master `servers.csv` is never
-  touched by a partial run; a minimized PowerShell window opens for the run
-  (restore it to watch raw output or Ctrl+C to abort).
+- **Deploy** — pick hosts and stages (each with a one-line description), enter
+  the BMC credentials, and launch `Invoke-Deployment.ps1` with one click
+  (two-step confirm). Selecting the bmc-baseline stage opens a form for the
+  DNS / NTP / timezone / syslog values, prefilled from the repo's
+  `deploy.config.psd1`; your edits apply to that run only — they are written
+  to `config\baseline.web.json` and passed via `-BaselineFile` (the config
+  file itself is never modified). The host selection is written to
+  `config\servers.deploy.csv` so the master `servers.csv` is never touched by
+  a partial run; a minimized PowerShell window opens for the run (restore it
+  to watch raw output or Ctrl+C to abort).
 
 ## Deploy-from-web security model
 
@@ -87,6 +95,7 @@ finish instead of as they happen.
 | Endpoint | Returns |
 |---|---|
 | `GET /api/fleet` | parsed `servers.csv` |
+| `GET /api/baseline` | Baseline section of `deploy.config.psd1` (blank fields if absent) |
 | `POST /api/fleet` | validate + save fleet to `servers.csv` (backs up previous) |
 | `POST /api/deploy` | launch `Invoke-Deployment.ps1` for selected hosts/stages |
 | `GET /api/runs` | run summaries (id, counts, hosts, start/end) |

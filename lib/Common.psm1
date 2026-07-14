@@ -158,9 +158,11 @@ function Import-ServerList {
         if ($r.Platform.ToLower()   -notin $validPlatform)   { throw "Row $n ($($r.IP)): Platform '$($r.Platform)' must be one of: $($validPlatform -join ', ')" }
         if ($r.Hypervisor.ToLower() -notin $validHypervisor) { throw "Row $n ($($r.IP)): Hypervisor '$($r.Hypervisor)' must be one of: $($validHypervisor -join ', ')" }
     }
-    # Comma operator: hand the array back as ONE object so a single-row list
-    # doesn't unwrap to a scalar in the caller.
-    return , $rows
+    # Plain return: a one-row list unwraps to a scalar, so callers must wrap in
+    # @() (they all do). Do NOT add the comma operator here - combined with @()
+    # at the call site it double-wraps into a nested array, and a multi-host run
+    # would see Count=1 and hand each stage an array of IPs instead of one host.
+    return $rows
 }
 
 # --- Reachability ------------------------------------------------------------

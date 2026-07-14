@@ -37,46 +37,65 @@ foreach ($s in $servers) {
     $ip = $s.IP
     $platform = $s.Platform.ToLower()
 
+    # The console shows each check as it happens; the LOG gets ONE consolidated
+    # 'readiness' row per host (the stage key the fleet grid joins on) plus
+    # 'fact:*' INFO rows with the inventory details (model / serial / firmware).
+    $notes  = @()
+    $status = 'OK'
+    $facts  = @{}
+
     # 1. Reachability
     if (-not (Test-HostReachable -IP $ip)) {
-        Write-Stage -Host_ $ip -Stage 'Readiness' -Status 'FAIL' -Message 'ICMP unreachable'
-        Add-LogRow  -Host_ $ip -Stage 'Readiness' -Status 'FAIL' -Message 'ICMP unreachable'
+        Write-Stage -Host_ $ip -Stage 'readiness' -Status 'FAIL' -Message 'ICMP unreachable'
+        Add-LogRow  -Host_ $ip -Stage 'readiness' -Status 'FAIL' -Message 'ICMP unreachable'
         continue
     }
     Write-Stage -Host_ $ip -Stage 'Reachability' -Status 'OK' -Message 'ping reply'
-    Add-LogRow  -Host_ $ip -Stage 'Reachability' -Status 'OK' -Message 'ping reply'
+    $notes += 'ping ok'
 
     # 2. BMC web port
     $web = Test-TcpPort -IP $ip -Port 443
     Write-Stage -Host_ $ip -Stage 'BMC-Port-443' -Status ($(if ($web) {'OK'} else {'WARN'})) -Message ($(if ($web) {'open'} else {'closed/filtered'}))
-    Add-LogRow  -Host_ $ip -Stage 'BMC-Port-443' -Status ($(if ($web) {'OK'} else {'WARN'})) -Message ($(if ($web) {'open'} else {'closed'}))
+    if ($web) { $notes += 'https 443 open' } else { $notes += '443 closed/filtered'; $status = 'WARN' }
 
-    # 3. Auth + firmware (read-only), per platform
+    # 3. Auth + inventory (read-only), per platform
     try {
         if ($platform -eq 'dell') {
             $info = Get-iDRACInfo -IP $ip -Credential $cred
             if ($info.Reachable) {
                 Write-Stage -Host_ $ip -Stage 'BMC-Auth' -Status 'OK' -Message "iDRAC $($info.Firmware)"
-                Add-LogRow  -Host_ $ip -Stage 'BMC-Auth' -Status 'OK' -Message $info.Firmware
+                $notes += "auth ok; iDRAC fw $($info.Firmware)"
+                if ($info.Model)       { $facts['Model']       = $info.Model }
+                if ($info.ServiceTag)  { $facts['Serial']      = $info.ServiceTag }
+                if ($info.BiosVersion) { $facts['Bios']        = $info.BiosVersion }
+                if ($info.Firmware)    { $facts['BmcFirmware'] = $info.Firmware }
             } else {
                 Write-Stage -Host_ $ip -Stage 'BMC-Auth' -Status 'FAIL' -Message 'racadm read failed (auth/cert?)'
-                Add-LogRow  -Host_ $ip -Stage 'BMC-Auth' -Status 'FAIL' -Message 'racadm read failed'
+                $notes += 'racadm read failed (auth/cert?)'; $status = 'FAIL'
             }
         }
         elseif ($platform -eq 'lenovo') {
             $info = Get-XCC3Info -IP $ip -Credential $cred
             if ($info.Reachable) {
                 Write-Stage -Host_ $ip -Stage 'BMC-Auth' -Status 'OK' -Message 'onecli inventory read ok'
-                Add-LogRow  -Host_ $ip -Stage 'BMC-Auth' -Status 'OK' -Message 'onecli inventory read ok'
+                $notes += 'auth ok; onecli inventory read ok'
+                if ($info.Model)    { $facts['Model']       = $info.Model }
+                if ($info.Serial)   { $facts['Serial']      = $info.Serial }
+                if ($info.Firmware) { $facts['BmcFirmware'] = $info.Firmware }
             } else {
                 Write-Stage -Host_ $ip -Stage 'BMC-Auth' -Status 'FAIL' -Message 'onecli read failed'
-                Add-LogRow  -Host_ $ip -Stage 'BMC-Auth' -Status 'FAIL' -Message 'onecli read failed'
+                $notes += 'onecli read failed'; $status = 'FAIL'
             }
         }
     }
     catch {
         Write-Stage -Host_ $ip -Stage 'BMC-Auth' -Status 'FAIL' -Message $_.Exception.Message
-        Add-LogRow  -Host_ $ip -Stage 'BMC-Auth' -Status 'FAIL' -Message $_.Exception.Message
+        $notes += "auth check error: $($_.Exception.Message)"; $status = 'FAIL'
+    }
+
+    Add-LogRow -Host_ $ip -Stage 'readiness' -Status $status -Message ($notes -join '; ')
+    foreach ($k in @($facts.Keys | Sort-Object)) {
+        Add-LogRow -Host_ $ip -Stage "fact:$k" -Status 'INFO' -Message $facts[$k]
     }
 }
 

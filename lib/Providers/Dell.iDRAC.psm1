@@ -96,17 +96,37 @@ function Get-RacadmValue {
 # --- Read-only (readiness) ----------------------------------------------------
 
 function Get-iDRACInfo {
-    <# Read-only: auth check + firmware + product/license. Safe for the audit stage. #>
+    <# Read-only: auth check + firmware + product/license + system inventory
+       (model / BIOS / service tag via getsysinfo). Safe for the audit stage.
+       getsysinfo parsing is defensive: any label that doesn't match on this
+       iDRAC generation just leaves the field empty instead of failing. #>
     param([string]$IP, [pscredential]$Credential)
     $ver = Invoke-Racadm -IP $IP -Credential $Credential -Args @('getversion')
     $lic = Invoke-Racadm -IP $IP -Credential $Credential -Args @('get', 'idrac.Info.Product')
     $fw  = if ($ver.Success) {
         (($ver.Output -split "`r?`n") | Where-Object { $_.Trim() -and $_ -notmatch '^Security Alert' -and $_ -notmatch '^Continuing execution' } | Select-Object -First 1)
     } else { '(read failed)' }
+
+    $model = ''; $bios = ''; $svctag = ''
+    if ($ver.Success) {
+        $sys = Invoke-Racadm -IP $IP -Credential $Credential -Args @('getsysinfo')
+        if ($sys.Success) {
+            foreach ($line in ($sys.Output -split "`r?`n")) {
+                $t = $line.Trim()
+                if (-not $model  -and $t -match '^System Model\s*=\s*(.+)$')        { $model  = $Matches[1].Trim() }
+                if (-not $bios   -and $t -match '^System BIOS Version\s*=\s*(.+)$') { $bios   = $Matches[1].Trim() }
+                # ^Service Tag anchors past 'Chassis Service Tag' on modular systems.
+                if (-not $svctag -and $t -match '^Service Tag\s*=\s*(.+)$')         { $svctag = $Matches[1].Trim() }
+            }
+        }
+    }
     return [pscustomobject]@{
-        Reachable = $ver.Success
-        Firmware  = ($fw | ForEach-Object { $_.Trim() })
-        Product   = if ($lic.Success) { Get-RacadmValue $lic.Output } else { 'Unknown' }
+        Reachable   = $ver.Success
+        Firmware    = ($fw | ForEach-Object { $_.Trim() })
+        Product     = if ($lic.Success) { Get-RacadmValue $lic.Output } else { 'Unknown' }
+        Model       = $model
+        BiosVersion = $bios
+        ServiceTag  = $svctag
     }
 }
 
@@ -117,7 +137,12 @@ function Get-iDRACInfo {
 function Set-iDRACDns {
     param([string]$IP, [pscredential]$Credential, [Parameter(Mandatory)][string]$Dns1, [string]$Dns2)
     $ok = $true; $d = @()
-    foreach ($c in @(@('set',$script:iDRAC.Dns1,$Dns1)) + $(if ($Dns2) { ,@('set',$script:iDRAC.Dns2,$Dns2) } else { @() })) {
+    # Build the command list with the comma operator per entry: @(@(...)) + @()
+    # flattens the inner array and would fire each TOKEN as its own racadm call.
+    $cmds = @()
+    $cmds += , @('set', $script:iDRAC.Dns1, $Dns1)
+    if ($Dns2) { $cmds += , @('set', $script:iDRAC.Dns2, $Dns2) }
+    foreach ($c in $cmds) {
         $r = Invoke-Racadm -IP $IP -Credential $Credential -Args $c
         if (-not $r.Success) { $ok = $false }
         $d += "$($c -join ' ') => $(if ($r.Success) {'OK'} else {'FAIL'})"
@@ -221,12 +246,31 @@ function Invoke-DellBmcBaseline {
         [Parameter(Mandatory)][pscredential]$Credential,
         [Parameter(Mandatory)][hashtable]$Baseline   # Dns1,Dns2,Ntp1,Ntp2,Timezone,SyslogServer,SyslogCaCertPath
     )
+    # Blank-value guards: baseline values may now come from the InfraServerSetup web
+    # form, so an empty field must yield a clean Skipped step instead of a
+    # parameter-binding error that aborts the host mid-baseline.
     $steps = @()
-    $steps += Set-iDRACDns          -IP $IP -Credential $Credential -Dns1 $Baseline.Dns1 -Dns2 $Baseline.Dns2
+    if ($Baseline.Dns1) {
+        $steps += Set-iDRACDns      -IP $IP -Credential $Credential -Dns1 $Baseline.Dns1 -Dns2 $Baseline.Dns2
+    } else {
+        $steps += [pscustomobject]@{ Step='DNS'; Status='Skipped'; Detail='no DNS1 value supplied' }
+    }
     $steps += Enable-iDRACMasterAlert -IP $IP -Credential $Credential                      # master switch before eventfilters
-    $steps += Set-iDRACNtp          -IP $IP -Credential $Credential -Ntp1 $Baseline.Ntp1 -Ntp2 $Baseline.Ntp2
-    $steps += Set-iDRACTimezone     -IP $IP -Credential $Credential -Timezone $Baseline.Timezone
-    $steps += Set-iDRACSecureSyslog -IP $IP -Credential $Credential -SyslogServer $Baseline.SyslogServer -CaCertPath $Baseline.SyslogCaCertPath
+    if ($Baseline.Ntp1) {
+        $steps += Set-iDRACNtp      -IP $IP -Credential $Credential -Ntp1 $Baseline.Ntp1 -Ntp2 $Baseline.Ntp2
+    } else {
+        $steps += [pscustomobject]@{ Step='NTP'; Status='Skipped'; Detail='no NTP1 value supplied' }
+    }
+    if ($Baseline.Timezone) {
+        $steps += Set-iDRACTimezone -IP $IP -Credential $Credential -Timezone $Baseline.Timezone
+    } else {
+        $steps += [pscustomobject]@{ Step='Timezone'; Status='Skipped'; Detail='no timezone supplied' }
+    }
+    if ($Baseline.SyslogServer -and $Baseline.SyslogCaCertPath) {
+        $steps += Set-iDRACSecureSyslog -IP $IP -Credential $Credential -SyslogServer $Baseline.SyslogServer -CaCertPath $Baseline.SyslogCaCertPath
+    } else {
+        $steps += [pscustomobject]@{ Step='SecureSyslog'; Status='Skipped'; Detail='syslog server and CA cert path are both required for Dell Secure Syslog'; Verify='(skipped)' }
+    }
     $steps += Set-iDRACAlerts       -IP $IP -Credential $Credential
     return $steps
 }

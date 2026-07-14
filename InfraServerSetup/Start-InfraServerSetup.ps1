@@ -68,6 +68,9 @@ function Read-CsvSafe {
         if ($RequireColumn) {
             $rows = @($rows | Where-Object { $_.PSObject.Properties[$RequireColumn] -and $_.$RequireColumn })
         }
+        # Plain return: a one-row result unwraps to a scalar, so EVERY call site
+        # must wrap in @(). Do NOT "fix" this with the comma operator - combined
+        # with @() at the call site that nests the array and breaks .Count/pipes.
         return $rows
     } catch {
         return @()
@@ -131,7 +134,7 @@ function Get-RunSummaries {
     foreach ($f in Get-RunFiles) {
         $null = $f.Name -match '^deploy_log_(\d{8}-\d{6})\.csv$'
         $id   = $Matches[1]
-        $rows = Read-CsvSafe -Path $f.FullName -RequireColumn 'Timestamp'
+        $rows = @(Read-CsvSafe -Path $f.FullName -RequireColumn 'Timestamp')
         if ($rows.Count -eq 0) { continue }
         $counts = @{ OK = 0; WARN = 0; FAIL = 0; SKIP = 0; INFO = 0 }
         foreach ($r in $rows) { if ($counts.ContainsKey($r.Status)) { $counts[$r.Status]++ } }
@@ -144,6 +147,28 @@ function Get-RunSummaries {
             counts  = [pscustomobject]$counts
         }
     }
+}
+
+$BaselineKeys = 'Dns1', 'Dns2', 'Ntp1', 'Ntp2', 'Timezone', 'SyslogServer', 'SyslogCaCertPath'
+
+function Get-BaselineDefaults {
+    <# Read the Baseline section of the repo's deploy.config.psd1 so the Deploy
+       tab can prefill the BMC-baseline form. Always returns all seven keys;
+       missing config (e.g. the sample data folder) just yields blanks. #>
+    $defaults = [ordered]@{}
+    foreach ($k in $BaselineKeys) { $defaults[$k] = '' }
+    try {
+        $cfgPath = Join-Path $DeployRepo 'config\deploy.config.psd1'
+        if (Test-Path $cfgPath) {
+            $c = Import-PowerShellDataFile -Path $cfgPath
+            if ($c.ContainsKey('Baseline')) {
+                foreach ($k in $BaselineKeys) {
+                    if ($c.Baseline.ContainsKey($k) -and $null -ne $c.Baseline[$k]) { $defaults[$k] = [string]$c.Baseline[$k] }
+                }
+            }
+        }
+    } catch { }
+    return [pscustomobject]$defaults
 }
 
 function Start-Deployment {
@@ -186,16 +211,36 @@ function Start-Deployment {
     $deployCsv = Join-Path (Split-Path $serversCsv -Parent) 'servers.deploy.csv'
     $selRows | Export-Csv -Path $deployCsv -NoTypeInformation -Encoding UTF8
 
+    # BMC baseline values from the Deploy tab form. Only meaningful when the
+    # bmc-baseline stage is selected; written to config\baseline.web.json and
+    # passed to the pipeline via -BaselineFile (no secrets in these values).
+    $blArg = ''
+    if ('bmc-baseline' -in $stages) {
+        $blProp = if ($req.PSObject.Properties['baseline']) { $req.baseline } else { $null }
+        if ($null -eq $blProp) { throw 'bmc-baseline stage selected but no baseline values were posted' }
+        $bl = [ordered]@{}
+        foreach ($k in $BaselineKeys) {
+            $p = $blProp.PSObject.Properties[$k]
+            $bl[$k] = if ($null -ne $p -and $null -ne $p.Value) { ([string]$p.Value).Trim() } else { '' }
+        }
+        foreach ($k in 'Dns1', 'Ntp1', 'Timezone') {
+            if (-not $bl[$k]) { throw "baseline value '$k' is required for the bmc-baseline stage" }
+        }
+        $baselineJson = Join-Path (Split-Path $serversCsv -Parent) 'baseline.web.json'
+        ([pscustomobject]$bl) | ConvertTo-Json -Compress | Set-Content -Path $baselineJson -Encoding UTF8
+        $blArg = " -BaselineFile '{0}'" -f $baselineJson.Replace("'", "''")
+    }
+
     # Wrap the run: transcript everything to logs\, and if the pipeline throws,
     # keep the window open showing the error instead of vanishing without a trace.
     $transcript = Join-Path $logsDir ("deploy_web_{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $cmd = ('try {{ Start-Transcript -Path ''{3}'' | Out-Null }} catch {{ }}; ' +
-            'try {{ & ''{0}'' -ServerList ''{1}'' -Stages {2} -Force }} ' +
+            'try {{ & ''{0}'' -ServerList ''{1}'' -Stages {2}{5} -Force }} ' +
             'catch {{ Write-Host $_ -ForegroundColor Red; ' +
             'Read-Host ''Deployment failed - see the error above (also logged to {4}); press Enter to close'' }} ' +
             'finally {{ try {{ Stop-Transcript | Out-Null }} catch {{ }} }}') -f
         $pipeline.Replace("'", "''"), $deployCsv.Replace("'", "''"), ($stages -join ','),
-        $transcript.Replace("'", "''"), (Split-Path $transcript -Leaf)
+        $transcript.Replace("'", "''"), (Split-Path $transcript -Leaf), $blArg
 
     try {
         $env:INFRASERVERSETUP_BMC_USER = $user
@@ -284,6 +329,10 @@ function Invoke-Route {
                 return
             }
             Send-Json -Ctx $Ctx -Object @(Read-CsvSafe -Path $serversCsv)
+            return
+        }
+        '^/api/baseline$' {
+            Send-Json -Ctx $Ctx -Object (Get-BaselineDefaults)
             return
         }
         '^/api/runs$' {

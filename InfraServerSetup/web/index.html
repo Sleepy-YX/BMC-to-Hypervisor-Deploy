@@ -81,6 +81,8 @@
   .hostname { color: var(--ink); font-weight: 600; cursor: pointer; }
   .hostname:hover { color: var(--accent); text-decoration: underline; }
   .meta { font-size: 11.5px; color: var(--ink-muted); }
+  .meta.facts { color: var(--ink-2); }
+  .stagedesc { font-size: 11.5px; color: var(--ink-muted); margin: -3px 0 7px 22px; }
 
   .cell {
     display: inline-flex; align-items: center; justify-content: center;
@@ -221,13 +223,26 @@
 
 const STAGES = ['readiness','firmware','bios','bmc-baseline','install','clusterjoin'];
 const STAGE_LABEL = { 'readiness':'Readiness','firmware':'Firmware','bios':'BIOS','bmc-baseline':'BMC Baseline','install':'Install','clusterjoin':'Cluster Join' };
+const STAGE_DESC = {
+  'readiness':    'Read-only audit: ping, BMC port, credential check, model/firmware inventory. Touches nothing; a failure aborts the host.',
+  'firmware':     'Update vendor firmware (Dell catalog / Lenovo UXSP). Runs before BIOS so new BIOS options exist.',
+  'bios':         'Apply the BIOS/RAID profile: boot mode (UEFI), power profile, virtual disk layout.',
+  'bmc-baseline': 'Configure the BMC itself: DNS, NTP, timezone, secure syslog with CA cert, and alert filters.',
+  'install':      'Mount the hypervisor ISO via BMC virtual media, set one-time boot, power-cycle. AHV nodes are imaged by Nutanix Foundation over IPMI instead.',
+  'clusterjoin':  'Wait for the hypervisor to come up, then join it to vCenter / Prism / Proxmox cluster / failover cluster.',
+};
+// 'fact:<Name>' INFO rows carry read-only inventory captured by the readiness stage.
+const FACT_LABEL = { Model:'Model', Serial:'Serial', Bios:'BIOS', BmcFirmware:'BMC FW' };
+const FACT_ORDER = ['Model','Serial','Bios','BmcFirmware'];
 const ICON = { OK:'✓', WARN:'!', FAIL:'✕', SKIP:'»', INFO:'·' };
+const stageDisplay = (s) => STAGE_LABEL[s] || (s && s.startsWith('fact:') ? 'Info: ' + (FACT_LABEL[s.slice(5)] || s.slice(5)) : esc(s));
 
 const state = {
-  fleet: [], runs: [], runRows: {}, live: null, wasLive: false,
+  fleet: [], runs: [], runRows: {}, live: null,
   tab: 'grid', filters: { Platform:'', Hypervisor:'', Cluster:'', Rack:'' },
   selectedHost: '', openRun: null, detail: null,
   editor: null, setupMsg: '', importNote: '',
+  baselineDefaults: null,
 };
 
 const COLS = ['IP','Hostname','Platform','Hypervisor','Rack','BiosProfile','Cluster'];
@@ -261,29 +276,71 @@ async function postJson(url, obj) {
 // ---- data ------------------------------------------------------------------
 
 async function loadAll() {
-  const [meta, fleet, runs] = await Promise.all([getJson('/api/meta'), getJson('/api/fleet'), getJson('/api/runs')]);
+  const [meta, fleet, runs, baseline] = await Promise.all([
+    getJson('/api/meta'), getJson('/api/fleet'), getJson('/api/runs'),
+    getJson('/api/baseline').catch(() => null),
+  ]);
   $('#repoPath').textContent = meta.deployRepo;
   state.fleet = fleet || [];
   state.runs = runs || [];
+  state.baselineDefaults = baseline || {};
   const rowSets = await Promise.all(state.runs.map(r => getJson('/api/runs/' + r.id)));
   state.runs.forEach((r, i) => { state.runRows[r.id] = rowSets[i] || []; });
   state.live = await getJson('/api/live');
-  state.wasLive = !!state.live;
+}
+
+// The pipeline logs hosts by BMC IP (it loops on IP), but the fleet grid and
+// host views key by Hostname. Map either form back to the fleet Hostname so
+// run rows join up with the fleet; unknown hosts pass through unchanged.
+function hostKeyMap() {
+  const m = {};
+  for (const h of state.fleet) {
+    if (!h.Hostname) continue;
+    m[h.Hostname] = h.Hostname;
+    if (h.IP) m[h.IP] = h.Hostname;
+  }
+  return m;
 }
 
 // latest non-INFO row per host|stage, runs in chronological order, live last
 function computeLatest() {
   const latest = {};
+  const alias = hostKeyMap();
   const runsAsc = [...state.runs].sort((a, b) => a.id.localeCompare(b.id));
   const apply = (rows, runId) => {
     for (const r of rows || []) {
       if (!r.Host || !r.Stage || r.Status === 'INFO') continue;
-      latest[r.Host + '|' + r.Stage] = { status: r.Status, msg: r.Message, ts: r.Timestamp, run: runId };
+      latest[(alias[r.Host] || r.Host) + '|' + r.Stage] = { status: r.Status, msg: r.Message, ts: r.Timestamp, run: runId };
     }
   };
   for (const run of runsAsc) apply(state.runRows[run.id], run.id);
   apply(state.live, 'live');
   return latest;
+}
+
+// latest 'fact:<Name>' INFO value per host (model / serial / firmware inventory
+// captured by the readiness stage), newest run wins, live run last.
+function computeFacts() {
+  const facts = {};
+  const alias = hostKeyMap();
+  const apply = (rows) => {
+    for (const r of rows || []) {
+      if (!r.Host || !r.Stage || !r.Stage.startsWith('fact:')) continue;
+      const h = alias[r.Host] || r.Host;
+      (facts[h] = facts[h] || {})[r.Stage.slice(5)] = r.Message;
+    }
+  };
+  for (const run of [...state.runs].sort((a, b) => a.id.localeCompare(b.id))) apply(state.runRows[run.id]);
+  apply(state.live);
+  return facts;
+}
+
+function factsLine(f) {
+  if (!f) return '';
+  const parts = FACT_ORDER.filter(k => f[k]).map(k => `${FACT_LABEL[k]} ${esc(f[k])}`);
+  const extra = Object.keys(f).filter(k => !FACT_ORDER.includes(k)).sort()
+    .map(k => `${esc(k)} ${esc(f[k])}`);
+  return parts.concat(extra).join(' &middot; ');
 }
 
 function visibleFleet() {
@@ -327,13 +384,16 @@ function renderFilters() {
 
 function renderGrid(latest) {
   const hosts = visibleFleet();
+  const facts = computeFacts();
   let html = renderFilters();
   html += '<table><thead><tr><th>Host</th>' +
-    STAGES.map(s => `<th class="center">${STAGE_LABEL[s]}</th>`).join('') +
+    STAGES.map(s => `<th class="center" title="${esc(STAGE_DESC[s])}">${STAGE_LABEL[s]}</th>`).join('') +
     '<th>Progress</th></tr></thead><tbody>';
   for (const h of hosts) {
+    const fl = factsLine(facts[h.Hostname]);
     html += `<tr><td><span class="hostname" data-host="${esc(h.Hostname)}">${esc(h.Hostname)}</span>` +
-      `<div class="meta">${esc(h.IP)} &middot; ${esc(h.Platform)} &middot; ${esc(h.Hypervisor)} &middot; ${esc(h.Cluster)} &middot; ${esc(h.Rack)}</div></td>`;
+      `<div class="meta">${esc(h.IP)} &middot; ${esc(h.Platform)} &middot; ${esc(h.Hypervisor)} &middot; ${esc(h.Cluster)} &middot; ${esc(h.Rack)}</div>` +
+      (fl ? `<div class="meta facts">${fl}</div>` : '') + '</td>';
     const segs = [];
     for (const s of STAGES) {
       const cell = latest[h.Hostname + '|' + s];
@@ -367,12 +427,14 @@ function renderRuns() {
   let html = '';
   // stats panels
   const failByStage = {}, failByHost = {};
+  const alias = hostKeyMap();
   const allRuns = [...state.runs];
   for (const run of allRuns) {
     for (const r of state.runRows[run.id] || []) {
       if (r.Status === 'FAIL') {
         failByStage[r.Stage] = (failByStage[r.Stage] || 0) + 1;
-        failByHost[r.Host] = (failByHost[r.Host] || 0) + 1;
+        const hk = alias[r.Host] || r.Host;
+        failByHost[hk] = (failByHost[hk] || 0) + 1;
       }
     }
   }
@@ -399,7 +461,7 @@ function renderRuns() {
     if (open) {
       html += '<div class="runbody"><table><thead><tr><th>Time</th><th>Host</th><th>Stage</th><th>Status</th><th>Message</th></tr></thead><tbody>';
       for (const r of state.runRows[run.id] || []) {
-        html += `<tr><td class="meta">${fmtTs(r.Timestamp).slice(11)}</td><td>${esc(r.Host)}</td><td>${STAGE_LABEL[r.Stage] || esc(r.Stage)}</td>` +
+        html += `<tr><td class="meta">${fmtTs(r.Timestamp).slice(11)}</td><td>${esc(r.Host)}</td><td>${stageDisplay(r.Stage)}</td>` +
           `<td><span class="cell st-${r.Status}" style="cursor:default">${ICON[r.Status] || '?'}</span> ${r.Status}</td><td>${esc(r.Message)}</td></tr>`;
       }
       html += '</tbody></table></div>';
@@ -418,14 +480,20 @@ function renderHost() {
   let html = `<div class="filters"><span class="flabel">Host</span><select data-hostsel="1">` +
     hosts.map(h => `<option ${h === state.selectedHost ? 'selected' : ''}>${esc(h)}</option>`).join('') + '</select></div>';
 
+  const hostFacts = computeFacts()[state.selectedHost];
+  const fl = factsLine(hostFacts);
+  if (fl) html += `<div class="panel" style="margin-bottom:14px"><h3>Inventory (from readiness)</h3><div>${fl}</div></div>`;
+
+  const alias = hostKeyMap();
+  const mine = r => (alias[r.Host] || r.Host) === state.selectedHost;
   const runsAsc = [...state.runs].sort((a, b) => a.id.localeCompare(b.id));
   const blocks = [];
   for (const run of runsAsc) {
-    const rows = (state.runRows[run.id] || []).filter(r => r.Host === state.selectedHost);
+    const rows = (state.runRows[run.id] || []).filter(mine);
     if (rows.length) blocks.push({ label: 'Run ' + fmtRunId(run.id), rows });
   }
   if (state.live) {
-    const rows = state.live.filter(r => r.Host === state.selectedHost);
+    const rows = state.live.filter(mine);
     if (rows.length) blocks.push({ label: 'LIVE RUN', rows });
   }
   if (!blocks.length) return html + `<div class="empty">No log rows for ${esc(state.selectedHost)} yet.</div>`;
@@ -433,7 +501,7 @@ function renderHost() {
   for (const b of blocks) {
     html += `<div class="stagegroup"><h3>${b.label}</h3><table><thead><tr><th>Time</th><th>Stage</th><th>Status</th><th>Message</th></tr></thead><tbody>`;
     for (const r of b.rows) {
-      html += `<tr><td class="meta">${fmtTs(r.Timestamp)}</td><td>${STAGE_LABEL[r.Stage] || esc(r.Stage)}</td>` +
+      html += `<tr><td class="meta">${fmtTs(r.Timestamp)}</td><td>${stageDisplay(r.Stage)}</td>` +
         `<td><span class="cell st-${r.Status}" style="cursor:default">${ICON[r.Status] || '?'}</span> ${r.Status}</td><td>${esc(r.Message)}</td></tr>`;
     }
     html += '</tbody></table></div>';
@@ -602,8 +670,28 @@ async function saveFleet() {
 
 // ---- deploy --------------------------------------------------------------------------
 
+const BASELINE_FIELDS = [
+  { key: 'Dns1',             label: 'DNS 1',        req: true  },
+  { key: 'Dns2',             label: 'DNS 2',        req: false },
+  { key: 'Ntp1',             label: 'NTP 1',        req: true  },
+  { key: 'Ntp2',             label: 'NTP 2',        req: false },
+  { key: 'Timezone',         label: 'Timezone',     req: true  },
+  { key: 'SyslogServer',     label: 'Syslog server',req: false },
+  { key: 'SyslogCaCertPath', label: 'Syslog CA cert', req: false },
+];
+
 function ensureDeploy() {
-  if (!state.dep) state.dep = { hosts: {}, stages: { readiness: true }, user: 'root', pass: '', arm: false, msg: '', err: '' };
+  if (!state.dep) state.dep = {
+    hosts: {}, stages: { readiness: true }, user: 'root', pass: '',
+    baseline: { ...(state.baselineDefaults || {}) },
+    arm: false, msg: '', err: '',
+  };
+}
+
+function baselineMissing() {
+  const d = state.dep;
+  if (!d.stages['bmc-baseline']) return [];
+  return BASELINE_FIELDS.filter(f => f.req && !(d.baseline[f.key] || '').trim()).map(f => f.label);
 }
 
 function deploySelection() {
@@ -630,7 +718,8 @@ function renderDeploy() {
 
   html += '<div class="panel"><h3>Stages</h3>' +
     STAGES.map(s =>
-      `<label class="chk"><input type="checkbox" data-dstage="${s}" ${d.stages[s] ? 'checked' : ''}>${STAGE_LABEL[s]}</label>`
+      `<label class="chk"><input type="checkbox" data-dstage="${s}" ${d.stages[s] ? 'checked' : ''}>${STAGE_LABEL[s]}</label>` +
+      `<div class="stagedesc">${esc(STAGE_DESC[s])}</div>`
     ).join('') +
     `<h3 style="margin-top:16px">BMC credentials</h3>
      <div class="cred"><span>Username</span><input data-dep="user" value="${esc(d.user)}" autocomplete="off"></div>
@@ -641,10 +730,23 @@ function renderDeploy() {
      window opens for the run - restore it to watch raw output or Ctrl+C to abort.</div>
     </div></div>`;
 
+  if (d.stages['bmc-baseline']) {
+    html += `<div class="panel" style="margin-bottom:14px"><h3>BMC baseline values</h3>
+      <div class="vnote" style="margin:0 0 8px">Applied by the bmc-baseline stage on every selected host
+      (prefilled from config\\deploy.config.psd1; edits here apply to this run only).
+      Dell Secure Syslog needs both the syslog server and a CA cert path on the jumphost -
+      leave either blank to skip that step.</div>` +
+      BASELINE_FIELDS.map(f =>
+        `<div class="cred"><span>${f.label}${f.req ? ' *' : ''}</span>` +
+        `<input data-dbl="${f.key}" value="${esc(d.baseline[f.key] || '')}" autocomplete="off" style="width:280px"></div>`
+      ).join('') + '</div>';
+  }
+
   const sel = deploySelection();
-  const ready = sel.hosts.length && sel.stages.length && d.pass;
+  const blMiss = baselineMissing();
+  const ready = sel.hosts.length && sel.stages.length && d.pass && !blMiss.length;
   html += `<div class="btnrow">
-      <span class="vnote">${sel.hosts.length} host(s) &middot; stages: ${sel.stages.join(', ') || 'none'}</span>
+      <span class="vnote">${sel.hosts.length} host(s) &middot; stages: ${sel.stages.join(', ') || 'none'}${blMiss.length ? ` &middot; <span style="color:var(--st-warn)">baseline needs: ${blMiss.join(', ')}</span>` : ''}</span>
       <span style="flex:1"></span>
       ${d.arm ? '<button class="btn" data-action="dep-disarm">Cancel</button>' : ''}
       <button class="btn primary" id="depLaunchBtn" data-action="${d.arm ? 'dep-launch' : 'dep-arm'}" ${ready ? '' : 'disabled'}>
@@ -660,7 +762,9 @@ async function launchDeploy() {
   const d = state.dep;
   const sel = deploySelection();
   try {
-    const res = await postJson('/api/deploy', { hosts: sel.hosts, stages: sel.stages, user: d.user, pass: d.pass });
+    const body = { hosts: sel.hosts, stages: sel.stages, user: d.user, pass: d.pass };
+    if (d.stages['bmc-baseline']) body.baseline = d.baseline;
+    const res = await postJson('/api/deploy', body);
     d.msg = `Deployment launched (PID ${res.pid}): ${res.hosts} host(s), stages: ${sel.stages.join(', ')}. The live view will pick it up within a few seconds.`;
     d.err = ''; d.pass = ''; d.arm = false;
   } catch (err) {
@@ -789,13 +893,14 @@ $('#view').addEventListener('input', (e) => {
     state.editor[+e.target.dataset.eidx][e.target.dataset.ekey] = e.target.value;
     state.setupMsg = '';
     updateSetupValidation();
-  } else if (e.target.matches('[data-dep]')) {
-    state.dep[e.target.dataset.dep] = e.target.value;
+  } else if (e.target.matches('[data-dep]') || e.target.matches('[data-dbl]')) {
+    if (e.target.dataset.dep) state.dep[e.target.dataset.dep] = e.target.value;
+    else state.dep.baseline[e.target.dataset.dbl] = e.target.value;
     state.dep.arm = false;
     const btn = $('#depLaunchBtn');
     if (btn) {
       const sel = deploySelection();
-      btn.disabled = !(sel.hosts.length && sel.stages.length && state.dep.pass);
+      btn.disabled = !(sel.hosts.length && sel.stages.length && state.dep.pass && !baselineMissing().length);
       btn.textContent = 'Launch deployment...';
       btn.dataset.action = 'dep-arm';
     }
@@ -814,7 +919,6 @@ async function pollLive() {
     const live = await getJson('/api/live');
     if (live) {
       state.live = live;
-      state.wasLive = true;
       // Don't wipe in-progress typing on the form tabs - refresh chrome only.
       if (state.tab === 'setup' || state.tab === 'deploy') {
         renderTiles(computeLatest());
@@ -822,15 +926,25 @@ async function pollLive() {
       } else {
         render();
       }
-    } else if (state.wasLive) {
-      // run just finalized: reload run list so it appears in history
-      state.live = null;
-      state.wasLive = false;
-      const runs = await getJson('/api/runs');
-      state.runs = runs || [];
-      const missing = state.runs.filter(r => !state.runRows[r.id]);
-      const rowSets = await Promise.all(missing.map(r => getJson('/api/runs/' + r.id)));
-      missing.forEach((r, i) => { state.runRows[r.id] = rowSets[i] || []; });
+      return;
+    }
+    // No live file. A short run can start AND finalize between polls (the live
+    // file only exists while the pipeline runs), so diff the run list every
+    // tick instead of requiring the live file to have been seen first.
+    const hadLive = !!state.live;
+    state.live = null;
+    const runs = await getJson('/api/runs') || [];
+    const known = new Set(state.runs.map(r => r.id));
+    const changed = runs.length !== state.runs.length || runs.some(r => !known.has(r.id));
+    if (!changed && !hadLive) return;
+    state.runs = runs;
+    const missing = runs.filter(r => !state.runRows[r.id]);
+    const rowSets = await Promise.all(missing.map(r => getJson('/api/runs/' + r.id)));
+    missing.forEach((r, i) => { state.runRows[r.id] = rowSets[i] || []; });
+    if (state.tab === 'setup' || state.tab === 'deploy') {
+      renderTiles(computeLatest());
+      renderTail();
+    } else {
       render();
     }
   } catch (err) { /* transient poll errors are fine */ }

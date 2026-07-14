@@ -13,6 +13,16 @@ Automation** repo (which stops at BMC baseline config).
 `readiness -> firmware -> bios -> bmc-baseline -> install -> clusterjoin`
 Driven by `Invoke-Deployment.ps1`. Read-only audit is `stages\Test-DeployReadiness.ps1`.
 
+Log conventions the dashboard depends on:
+- Readiness (both entry points) logs ONE consolidated `readiness` row per host
+  (ping/port/auth summary) plus `fact:<Name>` rows with Status `INFO` carrying
+  read-only inventory (`fact:Model`, `fact:Serial`, `fact:Bios`,
+  `fact:BmcFirmware`). The fleet grid joins on the lowercase stage names and
+  renders facts under the hostname; INFO rows never affect stage status cells.
+- `Invoke-Deployment.ps1 -BaselineFile <json>` overrides the config's Baseline
+  section for one run (all seven keys, blanks allowed). Written by the
+  InfraServerSetup Deploy tab to `config\baseline.web.json`; no secrets in it.
+
 ## Conventions (inherited -- apply to all new work)
 - CSV-driven per-host loop (`config\servers.csv`), columns: IP, Hostname,
   Platform (dell|lenovo), Hypervisor (esxi|ahv|proxmox|hyperv), + optional pass-through.
@@ -67,9 +77,12 @@ before wiring the XCC3 bmc-baseline path.
 ## InfraServerSetup dashboard (InfraServerSetup\)
 Foundation-style local web UI over this pipeline (PowerShell 5.1 HttpListener +
 self-contained vanilla-JS SPA, localhost-only, port 8474). Reads servers.csv +
-deploy_log CSVs; its only writes are config\servers.csv (Fleet Setup, with .bak)
-and config\servers.deploy.csv (web-launched host subset). Coupled to this repo in
-two places in lib\Common.psm1 -- keep them in sync with the dashboard:
+deploy_log CSVs + deploy.config.psd1 Baseline (GET /api/baseline prefills the
+Deploy tab's BMC-baseline form); its only writes are config\servers.csv (Fleet
+Setup, with .bak), config\servers.deploy.csv (web-launched host subset), and
+config\baseline.web.json (per-run baseline override, passed via -BaselineFile).
+Coupled to this repo in two places in lib\Common.psm1 -- keep them in sync with
+the dashboard:
 - Add-LogRow write-through to logs\deploy_log_live.csv (live view); removed by
   Save-DeployLog on finalize. Must stay non-fatal.
 - Read-BmcCredential consumes INFRASERVERSETUP_BMC_USER/PASS env vars (web-launch

@@ -37,6 +37,10 @@ param(
     [string]$FromStage = 'readiness',
     [ValidateSet('readiness','firmware','bios','bmc-baseline','install','clusterjoin')]
     [string]$ToStage = 'clusterjoin',
+    # JSON file with BMC-baseline values (Dns1, Dns2, Ntp1, Ntp2, Timezone,
+    # SyslogServer, SyslogCaCertPath) that override the config's Baseline
+    # section for this run. Written by the InfraServerSetup Deploy tab.
+    [string]$BaselineFile,
     [switch]$Force,
     [switch]$WhatIf
 )
@@ -55,6 +59,19 @@ Import-Module (Join-Path $root 'lib\Hypervisors\Proxmox.VE.psm1') -Force
 Import-Module (Join-Path $root 'lib\Hypervisors\AzureStackHCI.psm1') -Force
 
 $cfg = if (Test-Path $ConfigFile) { Import-PowerShellDataFile -Path $ConfigFile } else { @{} }
+
+# Baseline override from a web launch: replaces the config's Baseline section
+# wholesale (the form always posts all seven keys, blank = not set).
+if ($BaselineFile) {
+    if (-not (Test-Path $BaselineFile)) { throw "BaselineFile not found: $BaselineFile" }
+    $ovr = Get-Content -Path $BaselineFile -Raw | ConvertFrom-Json
+    $bl = @{ Dns1=''; Dns2=''; Ntp1=''; Ntp2=''; Timezone=''; SyslogServer=''; SyslogCaCertPath='' }
+    foreach ($p in $ovr.PSObject.Properties) {
+        if ($bl.ContainsKey($p.Name)) { $bl[$p.Name] = [string]$p.Value }
+    }
+    $cfg['Baseline'] = $bl
+    Write-Host "BMC baseline values overridden from $BaselineFile" -ForegroundColor DarkGray
+}
 
 # --- Resolve which stages to run ---------------------------------------------
 $allStages = @('readiness','firmware','bios','bmc-baseline','install','clusterjoin')
@@ -81,18 +98,51 @@ foreach ($s in $servers) {
     Write-Host ""
     Write-Host "########## $ip  ($platform -> $hyper)  ##########" -ForegroundColor White
 
+    # `break` inside the switch only exits the switch, so a failed readiness
+    # check needs this flag to actually abort the host's remaining stages.
+    $abortHost = $false
+
     foreach ($stage in $runStages) {
         try {
             switch ($stage) {
 
                 'readiness' {
+                    # Full read-only audit (same checks as stages\Test-DeployReadiness.ps1):
+                    # ping, BMC web port, auth + inventory. One consolidated log row for
+                    # the grid plus fact:* INFO rows (model / serial / firmware).
                     if (-not (Test-HostReachable -IP $ip)) {
                         Write-Stage $ip 'readiness' 'FAIL' 'ICMP unreachable -- aborting host'
                         Add-LogRow  $ip 'readiness' 'FAIL' 'ICMP unreachable'
-                        break   # abort this host
+                        $abortHost = $true
+                        break
                     }
-                    Write-Stage $ip 'readiness' 'OK' 'reachable'
-                    Add-LogRow  $ip 'readiness' 'OK' 'reachable'
+                    $notes = @('ping ok'); $rdyStatus = 'OK'; $facts = @{}
+                    $web = Test-TcpPort -IP $ip -Port 443
+                    if ($web) { $notes += 'https 443 open' } else { $notes += '443 closed/filtered'; $rdyStatus = 'WARN' }
+                    if ($platform -eq 'dell') {
+                        $info = Get-iDRACInfo -IP $ip -Credential $cred
+                        if ($info.Reachable) {
+                            $notes += "auth ok; iDRAC fw $($info.Firmware)"
+                            if ($info.Model)       { $facts['Model']       = $info.Model }
+                            if ($info.ServiceTag)  { $facts['Serial']      = $info.ServiceTag }
+                            if ($info.BiosVersion) { $facts['Bios']        = $info.BiosVersion }
+                            if ($info.Firmware)    { $facts['BmcFirmware'] = $info.Firmware }
+                        } else { $notes += 'racadm read failed (auth/cert?)'; $rdyStatus = 'FAIL' }
+                    } else {
+                        $info = Get-XCC3Info -IP $ip -Credential $cred
+                        if ($info.Reachable) {
+                            $notes += 'auth ok; onecli inventory read ok'
+                            if ($info.Model)    { $facts['Model']       = $info.Model }
+                            if ($info.Serial)   { $facts['Serial']      = $info.Serial }
+                            if ($info.Firmware) { $facts['BmcFirmware'] = $info.Firmware }
+                        } else { $notes += 'onecli read failed'; $rdyStatus = 'FAIL' }
+                    }
+                    Write-Stage $ip 'readiness' $rdyStatus ($notes -join '; ')
+                    Add-LogRow  $ip 'readiness' $rdyStatus ($notes -join '; ')
+                    foreach ($k in @($facts.Keys | Sort-Object)) {
+                        Add-LogRow $ip "fact:$k" 'INFO' $facts[$k]
+                    }
+                    if ($rdyStatus -eq 'FAIL') { $abortHost = $true }   # no auth => later stages can't work
                 }
 
                 'firmware' {
@@ -210,6 +260,7 @@ foreach ($s in $servers) {
             Write-Stage $ip $stage 'FAIL' $_.Exception.Message
             Add-LogRow  $ip $stage 'FAIL' $_.Exception.Message
         }
+        if ($abortHost) { break }   # skip this host's remaining stages
     }
 }
 

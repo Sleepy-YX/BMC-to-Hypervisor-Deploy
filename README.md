@@ -25,8 +25,10 @@ readiness  ->  firmware  ->  bios  ->  bmc-baseline  ->  install  ->  clusterjoi
 (read-only)   (vendor fw)  (BIOS/RAID) (DNS/NTP/etc)   (virt media)  (join mgr)
 ```
 
-- **readiness** -- read-only audit: reachability, BMC port, auth, firmware. Runs
-  first and is also standalone (`stages\Test-DeployReadiness.ps1`). Touches nothing.
+- **readiness** -- read-only audit: reachability, BMC port, auth, plus inventory
+  (model / serial / BIOS / BMC firmware) logged as `fact:*` rows that the
+  InfraServerSetup fleet grid displays per host. Runs first and is also
+  standalone (`stages\Test-DeployReadiness.ps1`). Touches nothing.
 - **firmware** -- vendor firmware update (Dell catalog / Lenovo UXSP). *Stub -- wire to your repo.*
 - **bios** -- apply BIOS/RAID profile (boot mode, power, virtual disk). *Stub.*
 - **bmc-baseline** -- DNS/NTP/Timezone/Secure Syslog/Alerts. **Dell is
@@ -52,7 +54,9 @@ a browser opens on `http://localhost:8474/` with
 - **Deploy** — pick hosts/stages and launch `Invoke-Deployment.ps1` from the
   browser (credentials go to the localhost server only and reach the pipeline
   via in-memory environment variables; web launches run `-Force`, with a
-  two-step confirm in the UI instead of console gates).
+  two-step confirm in the UI instead of console gates). Selecting the
+  bmc-baseline stage opens a form (prefilled from `deploy.config.psd1`) to set
+  DNS/NTP/timezone/syslog for that run, passed via `-BaselineFile`.
 
 See [`InfraServerSetup\README.md`](InfraServerSetup/README.md) for details and
 the demo mode (`tools\New-SampleData.ps1`). The console workflow below works
