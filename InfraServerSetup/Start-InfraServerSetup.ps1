@@ -223,8 +223,13 @@ function Start-Deployment {
             $p = $blProp.PSObject.Properties[$k]
             $bl[$k] = if ($null -ne $p -and $null -ne $p.Value) { ([string]$p.Value).Trim() } else { '' }
         }
-        foreach ($k in 'Dns1', 'Ntp1', 'Timezone') {
-            if (-not $bl[$k]) { throw "baseline value '$k' is required for the bmc-baseline stage" }
+        # No per-key requirement: the Dell baseline path already skips each
+        # sub-step (DNS / NTP / Timezone / SecureSyslog) with a clean Skipped
+        # row when its inputs are blank, so users can edit just the field(s)
+        # they want to change. Still refuse an entirely empty submission -
+        # that would run bmc-baseline with nothing to do.
+        if (-not ($BaselineKeys | Where-Object { $bl[$_] })) {
+            throw 'bmc-baseline stage selected but every baseline value is blank; fill in at least one field'
         }
         $baselineJson = Join-Path (Split-Path $serversCsv -Parent) 'baseline.web.json'
         ([pscustomobject]$bl) | ConvertTo-Json -Compress | Set-Content -Path $baselineJson -Encoding UTF8

@@ -670,14 +670,17 @@ async function saveFleet() {
 
 // ---- deploy --------------------------------------------------------------------------
 
+// Every field is optional individually - the pipeline skips each baseline
+// sub-step whose input is blank. We only require at least one non-blank field
+// across the form (otherwise bmc-baseline would run with nothing to do).
 const BASELINE_FIELDS = [
-  { key: 'Dns1',             label: 'DNS 1',        req: true  },
-  { key: 'Dns2',             label: 'DNS 2',        req: false },
-  { key: 'Ntp1',             label: 'NTP 1',        req: true  },
-  { key: 'Ntp2',             label: 'NTP 2',        req: false },
-  { key: 'Timezone',         label: 'Timezone',     req: true  },
-  { key: 'SyslogServer',     label: 'Syslog server',req: false },
-  { key: 'SyslogCaCertPath', label: 'Syslog CA cert', req: false },
+  { key: 'Dns1',             label: 'DNS 1' },
+  { key: 'Dns2',             label: 'DNS 2' },
+  { key: 'Ntp1',             label: 'NTP 1' },
+  { key: 'Ntp2',             label: 'NTP 2' },
+  { key: 'Timezone',         label: 'Timezone' },
+  { key: 'SyslogServer',     label: 'Syslog server' },
+  { key: 'SyslogCaCertPath', label: 'Syslog CA cert' },
 ];
 
 function ensureDeploy() {
@@ -688,10 +691,13 @@ function ensureDeploy() {
   };
 }
 
-function baselineMissing() {
+// Returns true when bmc-baseline is selected but every field is blank -
+// that's the only invalid state (any single non-blank field is enough; the
+// pipeline skips sub-steps whose inputs are empty).
+function baselineEmpty() {
   const d = state.dep;
-  if (!d.stages['bmc-baseline']) return [];
-  return BASELINE_FIELDS.filter(f => f.req && !(d.baseline[f.key] || '').trim()).map(f => f.label);
+  if (!d.stages['bmc-baseline']) return false;
+  return !BASELINE_FIELDS.some(f => (d.baseline[f.key] || '').trim());
 }
 
 function deploySelection() {
@@ -734,19 +740,21 @@ function renderDeploy() {
     html += `<div class="panel" style="margin-bottom:14px"><h3>BMC baseline values</h3>
       <div class="vnote" style="margin:0 0 8px">Applied by the bmc-baseline stage on every selected host
       (prefilled from config\\deploy.config.psd1; edits here apply to this run only).
-      Dell Secure Syslog needs both the syslog server and a CA cert path on the jumphost -
-      leave either blank to skip that step.</div>` +
+      Every field is optional - clear a value to skip that sub-step and leave
+      the BMC's existing setting untouched. Fill in at least one field.
+      Dell Secure Syslog needs both the syslog server and a CA cert path on the
+      jumphost - leave either blank to skip that step.</div>` +
       BASELINE_FIELDS.map(f =>
-        `<div class="cred"><span>${f.label}${f.req ? ' *' : ''}</span>` +
+        `<div class="cred"><span>${f.label}</span>` +
         `<input data-dbl="${f.key}" value="${esc(d.baseline[f.key] || '')}" autocomplete="off" style="width:280px"></div>`
       ).join('') + '</div>';
   }
 
   const sel = deploySelection();
-  const blMiss = baselineMissing();
-  const ready = sel.hosts.length && sel.stages.length && d.pass && !blMiss.length;
+  const blEmpty = baselineEmpty();
+  const ready = sel.hosts.length && sel.stages.length && d.pass && !blEmpty;
   html += `<div class="btnrow">
-      <span class="vnote">${sel.hosts.length} host(s) &middot; stages: ${sel.stages.join(', ') || 'none'}${blMiss.length ? ` &middot; <span style="color:var(--st-warn)">baseline needs: ${blMiss.join(', ')}</span>` : ''}</span>
+      <span class="vnote">${sel.hosts.length} host(s) &middot; stages: ${sel.stages.join(', ') || 'none'}${blEmpty ? ' &middot; <span style="color:var(--st-warn)">baseline needs at least one value</span>' : ''}</span>
       <span style="flex:1"></span>
       ${d.arm ? '<button class="btn" data-action="dep-disarm">Cancel</button>' : ''}
       <button class="btn primary" id="depLaunchBtn" data-action="${d.arm ? 'dep-launch' : 'dep-arm'}" ${ready ? '' : 'disabled'}>
@@ -900,7 +908,7 @@ $('#view').addEventListener('input', (e) => {
     const btn = $('#depLaunchBtn');
     if (btn) {
       const sel = deploySelection();
-      btn.disabled = !(sel.hosts.length && sel.stages.length && state.dep.pass && !baselineMissing().length);
+      btn.disabled = !(sel.hosts.length && sel.stages.length && state.dep.pass && !baselineEmpty());
       btn.textContent = 'Launch deployment...';
       btn.dataset.action = 'dep-arm';
     }

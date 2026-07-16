@@ -61,9 +61,11 @@ The `.cmd` passes arguments through: `InfraServerSetup.cmd -DeployRepo .\sample`
   the BMC credentials, and launch `Invoke-Deployment.ps1` with one click
   (two-step confirm). Selecting the bmc-baseline stage opens a form for the
   DNS / NTP / timezone / syslog values, prefilled from the repo's
-  `deploy.config.psd1`; your edits apply to that run only — they are written
-  to `config\baseline.web.json` and passed via `-BaselineFile` (the config
-  file itself is never modified). The host selection is written to
+  `deploy.config.psd1`; every field is optional (clear a value to skip that
+  sub-step and leave the BMC's existing setting untouched — fill in at least
+  one). Your edits apply to that run only — they are written to
+  `config\baseline.web.json` and passed via `-BaselineFile` (the config file
+  itself is never modified). The host selection is written to
   `config\servers.deploy.csv` so the master `servers.csv` is never touched by
   a partial run; a minimized PowerShell window opens for the run (restore it
   to watch raw output or Ctrl+C to abort).
