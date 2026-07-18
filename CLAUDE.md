@@ -13,49 +13,36 @@ Automation** repo (which stops at BMC baseline config).
 `readiness -> firmware -> bios -> bmc-baseline -> install -> clusterjoin`
 Driven by `Invoke-Deployment.ps1`. Read-only audit is `stages\Test-DeployReadiness.ps1`.
 
-Log conventions the dashboard depends on:
-- Readiness (both entry points) logs ONE consolidated `readiness` row per host
-  (ping/port/auth summary) plus `fact:<Name>` rows with Status `INFO` carrying
-  read-only inventory (`fact:Model`, `fact:Serial`, `fact:Bios`,
-  `fact:BmcFirmware`). The fleet grid joins on the lowercase stage names and
-  renders facts under the hostname; INFO rows never affect stage status cells.
-- `Invoke-Deployment.ps1 -BaselineFile <json>` overrides the config's Baseline
-  section for one run (all seven keys, blanks allowed). Written by the
-  InfraServerSetup Deploy tab to `config\baseline.web.json`; no secrets in it.
+Log contract the dashboard depends on: readiness logs ONE consolidated
+`readiness` row per host plus `fact:<Name>` rows (Status `INFO`, read-only
+inventory); the fleet grid joins on lowercase stage names and INFO rows never
+affect stage status cells. `Invoke-Deployment.ps1 -BaselineFile <json>`
+overrides the config's Baseline section for one run (the web Deploy tab writes
+it to `config\baseline.web.json`; no secrets in it).
 
-## Conventions (inherited -- apply to all new work)
+## Conventions (apply to all new work)
 - CSV-driven per-host loop (`config\servers.csv`), columns: IP, Hostname,
   Platform (dell|lenovo), Hypervisor (esxi|ahv|proxmox|hyperv), + optional pass-through.
 - Masked password prompt, entered once per run, never stored (SecureString;
   decrypt only at the moment of a CLI call).
-- Per-host status logged to a timestamped CSV (`logs\deploy_log_<timestamp>.csv`)
-  plus a console summary table.
-- **Always build/run the read-only audit first**, before any changing stage,
-  every time.
+- Per-host status to a timestamped CSV (`logs\deploy_log_<timestamp>.csv`) plus
+  a console summary table.
+- **Always run the read-only audit first**, before any changing stage; verify
+  new platform/stage work against ONE live host before enabling it for the fleet.
 - Changing stages show a summary of intended changes and confirm before touching
   hardware (`-Force` to skip, `-WhatIf` for a full dry run).
-- Confirmed attribute names / gotchas get written into `docs\` -- don't re-derive
-  things already solved.
-
-## Hard-won gotchas to remember (from the Dell work; watch for XCC3 equivalents)
-1. `--nocertwarn` on every racadm call -- cert banners break naive output parsing.
-2. Some commands (e.g. `eventfilters`) return exit 0 while partially failing --
-   inspect output TEXT for failure strings, never trust exit code alone.
-3. Enum attributes often want string values (`Enabled`/`Disabled`), not `1`/`0` --
-   check `get` / `config show` output format before assuming.
-4. PowerShell: `"${status}: $cmd"` not `"$status: $cmd"` (colon breaks parsing);
-   can't embed a second statement inside an if/else-as-expression.
+- Confirmed attribute names / gotchas get written into `docs\` as they're found
+  (load-bearing, don't re-derive). Dell/racadm specifics live in
+  `docs/README-iDRAC-Automation.md`. One principle worth keeping inline: BMC
+  CLIs can return exit 0 while partially failing -- inspect output TEXT for
+  failure strings, never trust exit code alone.
 
 ## Status
-**Working (platform-independent):** orchestrator + stage gating, masked creds,
-CSV load/validate, read-only readiness (ping/port/auth), logging, confirm gate,
-Dell virtual-media boot control.
-
-**Dell BMC baseline: production-tested.** The confirmed iDRAC logic (DNS, master
-alert, NTP, timezone, Secure Syslog with CA cert upload, eventfilters) is ported
-into `lib/Providers/Dell.iDRAC.psm1` (`Invoke-DellBmcBaseline`) from the proven
-standalone scripts in `platforms/dell/`. Confirmed attributes/gotchas are in
-`docs/README-iDRAC-Automation.md` — treat as load-bearing.
+**Dell BMC baseline: production-tested** -- `lib/Providers/Dell.iDRAC.psm1`
+(`Invoke-DellBmcBaseline`), confirmed attributes in
+`docs/README-iDRAC-Automation.md`. Also working: orchestrator + stage gating,
+masked creds, CSV load/validate, readiness, logging, confirm gate, Dell
+virtual-media boot control.
 
 **Needs live-hardware verification before fleet use** (search `TODO(live-hardware)`
 and `stub`): firmware update, BIOS/RAID profile apply, XCC3 virtual-media +
@@ -67,19 +54,12 @@ routes through `BMC.RemoteAlertRecipient*` rather than a dedicated `BMC.SysLog*`
 Confirm with `onecli config show BMC.RemoteAlertRecipientMethod_1` on real hardware
 before wiring the XCC3 bmc-baseline path.
 
-## Working style for this repo
-- New platform/stage work: read-only path → verify against ONE live host →
-  only then enable the changing step for the fleet.
-- Iterate against a single live host before rollout.
-- Document confirmed attribute names and fixes in `docs\` as they're found --
-  treat these as load-bearing, not optional cleanup.
-
 ## InfraServerSetup dashboard (InfraServerSetup\)
-Foundation-style local web UI over this pipeline (PowerShell 5.1 HttpListener +
-self-contained vanilla-JS SPA, localhost-only, port 8474). Reads servers.csv +
-deploy_log CSVs + deploy.config.psd1 Baseline (GET /api/baseline prefills the
-Deploy tab's BMC-baseline form); its only writes are config\servers.csv (Fleet
-Setup, with .bak), config\servers.deploy.csv (web-launched host subset), and
+Local web UI over this pipeline (PowerShell 5.1 HttpListener + self-contained
+vanilla-JS SPA, localhost-only, port 8474). Reads servers.csv + deploy_log CSVs +
+deploy.config.psd1 Baseline (GET /api/baseline prefills the Deploy tab's
+BMC-baseline form); its only writes are config\servers.csv (Fleet Setup, with
+.bak), config\servers.deploy.csv (web-launched host subset), and
 config\baseline.web.json (per-run baseline override, passed via -BaselineFile).
 Coupled to this repo in two places in lib\Common.psm1 -- keep them in sync with
 the dashboard:
